@@ -1,0 +1,259 @@
+---
+title: "2024 Lagoons Data ETL"
+author: "SDMiller"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Load libraries
+#library(RODBC)
+# library(knitr)
+# library(ggplot2)
+# library(sp)
+# library(sf)
+# library(sqldf)
+library(tidyverse)
+library(readxl)
+# library(odbc)
+# library(leaflet)
+
+connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna_dev", Database = "ARCN_Lagoons")
+dir = r'(O:\Monitoring\Vital Signs\Lagoon Communities and Ecosystems\Data\2024 Lagoons Sampling\Deliverables processing/)'
+dir = r'(C:\Work\VitalSigns\ARCN Lagoons\Data\2024 Lagoons Sampling\Deliverables processing/)' # copied local for speed
+filename = r'(2021-2024 WCS CAKR Coastal Lagoons Data Received 2024-07-31 From KFraley.xlsx)'
+workbook = paste(dir,filename,sep="")
+
+```
+
+# Deliverable L11-Fish data processing
+
+This section contains processing steps to get the fish data (Deliverable L11) processed for ingestion into the master lagoons monitoring database.
+
+## Step 1. Load the worksheet
+
+```{r}
+# Get the worksheet names
+#excel_sheets(workbook)
+
+# Load the fish data
+worksheet = "Fish Data 2024"
+fd = readxl::read_excel(workbook,worksheet)
+
+```
+
+## Step 2. Check data types
+
+```{r}
+
+# Use these tools to check that data types match expected attributes, statistics such as min/max, etc. are as expected
+# glimpse(fd)
+
+# view(fd)
+
+
+```
+
+## Step 3. Fix defects
+
+```{r}
+# Dates are not real dates
+fd$Date = as.Date(fd$Date)
+
+```
+
+
+# Step 1. Ensure the Lagoons in the Water Quality worksheet validate with standard Lagoon names in the database
+
+Lagoons must match existing lagoons, as spelled in the database Lagoons table.
+
+```{r}
+
+# First, make sure the lagoons exist in the lagoons table
+x = as.data.frame(wq %>% distinct(Lagoon))
+for(i in 1:nrow(x)){
+  y=x[i,1]
+  sql = paste("SELECT * FROM Lagoons WHERE Lagoon='",y,"' -- INSERT INTO Lagoons(Lagoon)VALUES('",y,"')\n",sep="")
+  cat(sql)
+}
+
+```
+
+# Insert the Sites if they don't exist
+
+```{r}
+
+
+# Check that the field sites exist in the Sites database table. If the field sites do not exist in the database then those records will be rejected by the database.
+# This code writes to standard output a set of SELECT queries that can be executed against the database. If any SELECT queries return zero results, then you must INSERT the site using the accompanying INSERT query.
+x = as.data.frame(wq %>% distinct(Lagoon,Location))
+SourceFile='L10 2024 Lagoons Discrete Water Quality Data.csv'
+for(i in 1:nrow(x)){
+  Lagoon=x[i,1]
+  Site = x[i,2]
+  sql = paste("SELECT * FROM Sites WHERE Lagoon='",Lagoon,"' And  Site='",Site,"'\n -- INSERT INTO Sites(Lagoon,Site,SourceFile)VALUES('",Lagoon,"','",Site,"','",SourceFile,"')\n",sep="")
+  cat(sql)
+}
+# The sites should all exist now
+
+```
+
+# Insert sampling events
+
+```{r}
+# Next insert the sampling events
+
+x = as.data.frame(wq %>% distinct(Lagoon,Location,Date))
+SourceFile='L10 2024 Lagoons Discrete Water Quality Data.csv'
+Output = 'BEGIN TRANSACTION -- COMMIT ROLLBACK\n'
+for(i in 1:nrow(x)){
+  Lagoon=x[i,1]
+  Site = x[i,2]
+  Date=x[i,3]
+  Sql = paste("INSERT INTO SamplingEvents(Lagoon,Site,Date,SourceFile)VALUES('",Lagoon,"','",Site,"','",Date,"','",SourceFile,"')\n",sep="")
+  Output = paste(Output,Sql,sep="")
+}
+write(Output,paste(dir,"INSERT SamplingEvents.sql",sep=""))
+
+```
+
+# Insert discrete water quality data
+
+```{r}
+# Do a little quality control
+# glimpse(wq)
+# # ODO mg/L is all NULLs
+# wq %>% distinct(`ODO mg/L`)
+# # Notes is all NULLs
+# wq %>% distinct(NOTES)
+# library(summarytools)
+# descr(wq)
+# str(wq)
+
+
+wq %>% mutate(DateAK = with_tz(Date, tzone = "America/Anchorage"))
+wq$SPC = wq$`SPC (µS/cm)`
+wq$SPC
+CSVFile='L10 2024 Lagoons Discrete Water Quality Data.csv'
+SqlFile=paste(CSVFile,".sql",sep="")
+Output = 'BEGIN TRANSACTION -- COMMIT ROLLBACK\n'
+for(i in 1:nrow(wq)){
+  Lagoon = ifelse(is.na(wq[i, 'Lagoon']),'NULL', wq[i, 'Lagoon'])
+  Date = ifelse(is.na(wq[i, 'DateAK']),'NULL', wq[i, 'DateAK'])
+  Location = ifelse(is.na(wq[i, 'Location']),'NULL', wq[i, 'Location'])
+  TEMP = ifelse(is.na(wq[i, 'TEMP (Celsius)']),'NULL', wq[i, 'TEMP (Celsius)'])
+  SPC = wq[i, 'SPC']
+  Salinity = ifelse(is.na(wq[i, 'Salinity (ppt)']),'NULL', wq[i, 'Salinity (ppt)'])
+  ODOPct = ifelse(is.na(wq[i, 'ODO%']),'NULL', wq[i, 'ODO%'])
+  ODOmgL = ifelse(is.na(wq[i, 'ODO mg/L']),'NULL', wq[i, 'ODO mg/L'])
+  pH = ifelse(is.na(wq[i, 'pH']),'NULL', wq[i, 'pH'])
+  ChlorophylRFU = ifelse(is.na(wq[i, 'Chlorophyl RFU']),'NULL', wq[i, 'Chlorophyl RFU'])
+  BGARFU = ifelse(is.na(wq[i, 'BGA RFU']),'NULL', wq[i, 'BGA RFU'])
+  TurbidityFNU = ifelse(is.na(wq[i, 'Turbidity (FNU)']),'NULL', wq[i, 'Turbidity (FNU)'])
+  NOTES = ifelse(is.na(wq[i, 'NOTES']),'NULL', wq[i, 'NOTES'])
+
+    Sql = paste("INSERT INTO WaterQualityDiscrete(
+Year
+,Lagoon
+,Site
+,Date
+,LocationDescription
+,[Temperature (C)]
+,[Conductivity (uS/cm)]
+,[Salinity (ppt)]
+,[Dissolved Oxygen (% sat)]
+,[Dissolved Oxygen (mg/l)]
+,[pH]
+,[Chlorophyll (RFU)]
+,[Blue-green Algae  (RFU)]
+,[Turbidity (FNU)]
+,SourceFile)VALUES(
+'",Lagoon,"'
+,'",Site,"'
+,'",Date,"'
+,'",Location,"'
+,",TEMP,"
+,",SPC,"
+,",Salinity,"
+,",ODOPct,"
+,",ODOmgL,"
+,",pH,"
+,",ChlorophylRFU,"
+,",BGARFU,"
+,",TurbidityFNU,"
+,'",SourceFile,"')\n",sep="")
+  Output = paste(Output,Sql,sep="")
+}
+write(Output,paste(dir,SqlFile,sep=""))
+write.table(wq,paste(dir,CSVFile,sep=""),row.names = FALSE,na = "NULL",quote = FALSE,sep = ",")
+writexl::write_xlsx(wq,paste(dir,CSVFile,".xlsx",sep=""))
+# pre-print columnname definitions
+# for (colname in colnames(wq)) {
+#   
+#   cat(gsub(')','',gsub(' ','',colname))," = wq[i,'",colname,"']","\n",sep="")
+# }
+
+```
+
+
+
+# WQ EA INSERT
+
+The below was a test to see how hard it would be to extract and store the WQD data as entity/value pairs. It proved difficult but could be useful for parameters that fall outsite the 'standard' ones described by the protocol.
+
+```{r}
+wq = readxl::read_excel(workbook,worksheet)
+wq = as.data.frame(wq)
+# glimpse(wq)
+# Next insert the data
+
+# Output = 'BEGIN TRANSACTION -- COMMIT ROLLBACK\n'
+# 
+# GetInsertQuery = function(ColumnName,DesiredColumnName,Units){
+#   for(i in 1:nrow(wq)){
+#     Lagoon = wq[i,'Lagoon']
+#     Date  = wq[i,'Date']
+#     Site  = wq[i,'Location']
+#     Entity = ColumnName
+#     Value = wq[i,ColumnName]
+#     
+#     Sql = paste("INSERT INTO [dbo].[WaterQualityDiscreteEA]
+#            ([Lagoon]
+#            ,[Site]
+#            ,[Date]
+#            ,[Entity]
+#            ,[Value]
+#            ,[SampleDepth_m]
+#            ,[Units]
+#            ,SourceFile)
+#      VALUES
+#            ('",Lagoon,"'
+#            ,'",Site,"'
+#            ,'",Date,"'
+#            ,'",DesiredColumnName,"'
+#            ,",wq[i,ColumnName],"
+#            ,NULL
+#            ,'",Units,"'
+#            ,'",SourceFile,"')\n\n",sep="")
+#     Output = paste(Output,Sql,sep="")
+#   }
+#   return(Output)
+# }
+# ColumnName = 'TEMP (Celsius)'
+# DesiredColumnName = 'Temperature'
+# Units = 'C'
+# Queries = GetInsertQuery(ColumnName,DesiredColumnName,Units)
+# OutputFilename = paste(dir,"INSERT ",DesiredColumnName,".sql",sep="")
+# write(Queries,OutputFilename)
+
+# pre-print columnname definitions
+# for (colname in colnames(wq)) {
+#   cat(colname," = wq[i,'",colname,"']","\n")
+# }
+
+
+```
+
