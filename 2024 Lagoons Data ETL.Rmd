@@ -16,12 +16,7 @@ These data were received from WCS, Kevin Fraley.
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 # Load libraries
-#library(RODBC)
-# library(knitr)
-# library(ggplot2)
-# library(sp)
-# library(sf)
-# library(sqldf)
+library(sqldf)
 library(tidyverse)
 library(readxl)
 library(odbc)
@@ -54,7 +49,7 @@ LagoonExists = function(DatabaseConnection, Lagoon) {
     if (nrow(result) == 0) {
       return(paste("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon," Does not exist\n",sep=""))
     } else {
-      return(paste("SELECT * FROM Lagoons WHERE Lagoon = '",Lagoon,"') -- ",Lagoon," Exists\n",sep=""))
+      return(paste(Sql," -- Exists\n",sep=""))
     }
   }, error = function(e) {
     # Bummer
@@ -84,7 +79,7 @@ SiteExists = function(DatabaseConnection, Lagoon,Site,Lat='NULL',Lon='NULL') {
       }
 
     } else {
-      return(paste("SELECT * FROM Sites WHERE Site = '",Site,"' -- ",Site," Exists\n",sep=""))
+      return(paste(Sql," -- Exists\n",sep=""))
     }
     
   }, error = function(e) {
@@ -114,7 +109,7 @@ SamplingEventExists = function(DatabaseConnection, Lagoon,Date,Site) {
     if (nrow(result) == 0) {
         return(paste("INSERT INTO SamplingEvents(Lagoon,Site,Date)VALUES('",Lagoon,"','",Site,"','",Date,"'",sep=""))
     } else {
-      return(paste("SELECT * FROM SamplingEvents WHERE Lagoon='",Lagoon,"' And Site = '",Site,"' And [Date] = '",Date,"' -- ",Site," Exists\n",sep=""))
+      return(paste(Sql," -- Exists\n",sep=""))
     }
     
     
@@ -124,22 +119,12 @@ SamplingEventExists = function(DatabaseConnection, Lagoon,Date,Site) {
     return(NULL) # or handle the error as appropriate
   })
 }
-#cat(SamplingEventExists(connection,'Anigaaq','2024-06-23','ANI_ME'))
+# cat(SamplingEventExists(connection,'Anigaaq','2024-06-23','ANI_ME'))
+# cat(SamplingEventExists(connection,'Aukulak','2024-06-19','AUK_OUT'))
 
-
-# Filters FishData for CommonName (match case) and updates the records with Family,Genus,Species
-# UpdateFishTaxa = function(CommonName,Family,Genus,Species){
-#   cat(CommonName,Family,Genus,Species,FishData$CommonName,FishData$CommonName==CommonName,"\n",sep="")
-#   FishData$Family = ifelse(FishData$CommonName==CommonName,'Gasterosteidae',FishData$Family)
-#   FishData$Genus = ifelse(FishData$CommonName==CommonName,'Gasterosteus',FishData$Genus)
-#   FishData$Species = ifelse(FishData$CommonName==CommonName,'Gasterosteus',FishData$Species)
-# }
-# UpdateFishTaxa('Juvenile salmon','Salmonidae','Onchorhynchus','spp.')
-# # Find out which species didn't map
-# FishData %>% filter(is.na(Genus)==TRUE) %>% distinct(CommonName)
 ```
 
-# Deliverable L11-Fish data processing
+# 2021 Deliverable L11-Fish data processing
 
 This section contains processing steps to get the fish data (Deliverable L11) processed for ingestion into the master lagoons monitoring database.
 
@@ -150,7 +135,7 @@ This section contains processing steps to get the fish data (Deliverable L11) pr
 #excel_sheets(workbook)
 
 # Load the fish data
-worksheet = "Fish Data 2024"
+worksheet = "Fish Data 2021"
 fd = readxl::read_excel(workbook,worksheet)
 
 ```
@@ -162,29 +147,44 @@ fd = readxl::read_excel(workbook,worksheet)
 # Use these tools to check that data types match expected attributes, statistics such as min/max, etc. are as expected
 glimpse(fd)
 
-# view(fd)
+# fd %>% distinct(Year)
+# fd %>% distinct(Date)
+# fd %>% distinct(Lagoon)
+# fd %>% distinct(Site)
+# fd %>% distinct(`Gear Type`)
+# fd %>% distinct(`Set Time (hours)`)
+# fd %>% distinct(`Check Number`)
+# fd %>% distinct(`Check Time`)
+# fd %>% distinct(Species)
+# fd %>% distinct(Year)
+# fd %>% distinct(`Fork Length (mm)`) %>% arrange(`Fork Length (mm)`)
 
-fd %>% distinct(Year)
-fd %>% distinct(Date)
-fd %>% distinct(Lagoon)
-fd %>% distinct(Site)
-fd %>% distinct(`Gear Type`)
-fd %>% distinct(`Set Time (hours)`)
-fd %>% distinct(`Check Number`)
-fd %>% distinct(`Check Time`)
-fd %>% distinct(Species)
-fd %>% distinct(Year)
-fd %>% distinct(`Fork Length (mm)`) %>% arrange(`Fork Length (mm)`)
-fd %>% distinct(ForkLength) %>% arrange(`Fork Length (mm)`)
 
 
 ```
 
-## Step 3. Fix defects, 2024
+## Step 3. Fix defects, 2021
 
-### 2024 Lagoons existence check
+### Fix lagoons
 
 ```{r}
+# fix lagoon names
+fd$Lagoon = ifelse(fd$Lagoon=='Aniqaaq','Anigaaq',fd$Lagoon)
+fd$Lagoon = ifelse(fd$Lagoon=='Aukulaaq','Aukulak',fd$Lagoon)
+
+# offload non-existent lagoons
+fd = fd %>% filter(Lagoon != 'Rabbit Creek' & Lagoon != 'Situkuyok')
+# i don't know where rabbit creek or Situkuyok is, no spatial data
+# write to a file and filter out of the dataset
+#write.csv(fd %>% filter(Lagoon == 'Rabbit Creek'),paste(dir,"L11 Rabbit Creek Fish Data.csv",sep=""))
+#write.csv(fd %>% filter(Lagoon == 'Situkuyok'),paste(dir,"L11 Situkuyok Fish Data.csv",sep=""))
+
+```
+
+### 2021 Lagoons existence check
+
+```{r}
+
 # make sure lagoons exist
 Lagoons = as.data.frame(fd %>% distinct(Lagoon))
 
@@ -195,21 +195,14 @@ for(i in 1:nrow(Lagoons)){
   #cat("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon," ",Exists,"\n",sep="")
 }
 
-ValidLagoonNames = dbGetQuery(connection,"SELECT DISTINCT Lagoon FROM Lagoons ORDER BY Lagoon")
+# ValidLagoonNames = dbGetQuery(connection,"SELECT DISTINCT Lagoon FROM Lagoons ORDER BY Lagoon")
 
-# fix lagoon names
-fd$Lagoon = ifelse(fd$Lagoon=='Aniqaaq','Anigaaq',fd$Lagoon)
-fd$Lagoon = ifelse(fd$Lagoon=='Aukulaaq','Aukulak',fd$Lagoon)
 
-# i don't know where rabbit creek or Situkuyok is, no spatial data
-# write to a file and filter out of the dataset
-#write.csv(fd %>% filter(Lagoon == 'Rabbit Creek'),paste(dir,"L11 Rabbit Creek Fish Data.csv",sep=""))
-#write.csv(fd %>% filter(Lagoon == 'Situkuyok'),paste(dir,"L11 Situkuyok Fish Data.csv",sep=""))
-fd = fd %>% filter(Lagoon != 'Rabbit Creek' & Lagoon != 'Situkuyok')
 
 ```
 
-### 2024 Sites existence check
+
+### Fix Sites
 
 ```{r}
 
@@ -218,10 +211,10 @@ fd = fd %>% filter(Lagoon != 'Rabbit Creek' & Lagoon != 'Situkuyok')
 # in order to fix Site we need to move it's current data into SiteType
 fd$SiteType = fd$Site
 
-glimpse(fd)
+# glimpse(fd)
 
 # Distinct sites
-fd %>% distinct(Site,SiteType) %>% arrange(Site)
+# fd %>% distinct(Site,SiteType) %>% arrange(Site)
 
 # Create site names
 fd$Site = paste(toupper(substr(fd$Lagoon,1,3)),"_",toupper(substr(fd$SiteType,1,3)), sep="")
@@ -229,13 +222,14 @@ fd$Site = paste(toupper(substr(fd$Lagoon,1,3)),"_",toupper(substr(fd$SiteType,1,
 # go back and fix items
 fd$Site = ifelse(fd$SiteType=='Inflow',paste(toupper(substr(fd$Lagoon,1,3)),"_IN", sep=""),fd$Site)
 fd$Site = ifelse(fd$SiteType=='Marine Edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
+fd$Site = ifelse(fd$SiteType=='Marine',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
 fd$Site = ifelse(fd$SiteType=='Marine edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
-fd$Site = ifelse(fd$SiteType=='Inlet Side',paste(toupper(substr(fd$Lagoon,1,3)),"_NS", sep=""),fd$Site)
-fd$Lagoon = ifelse(fd$SiteType=='River beaver lodge',"Aukulaaq",fd$Lagoon)
-fd$Site = ifelse(fd$SiteType=='River beaver lodge',paste(toupper(substr(fd$Lagoon,1,3)),"_NS", sep=""),fd$Site)
 
-# What is River beaver lodge?
-fd %>% filter(SiteType=='River beaver lodge')
+```
+
+### 2021 Sites existence check
+
+```{r}
 
 # Check sites exist, if not get insert queries
 Sites = fd %>% distinct(Lagoon,Site,Lat,Long)
@@ -251,14 +245,19 @@ for(i in 1:nrow(Sites)){
 
 ```
 
-### 2024 Sampling Events existence check
+### Fix Sampling Events
 
 ```{r}
 # Fix Sites
-Events = fd %>% distinct(Lagoon,Date,Site)
+Events = fd %>% distinct(Lagoon,Date,Site) %>% arrange(Site)
 Events$RealDate = as.character(Events$Date)
-Events
-glimpse(Events)
+
+```
+
+### 2024 Sampling Events existence check
+
+```{r}
+
 cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
 cat("-- ",nrow(Events)," rows\n")
 for(i in 1:nrow(Events)){
@@ -321,10 +320,8 @@ fd %>% distinct(CommonName)
 
 # Fork length is character because of censored data. Some values have a '+', for example
 fd$ForkLength = ifelse(is.na(as.numeric(fd$`Fork Length (mm)`)), NA, as.numeric(fd$`Fork Length (mm)`))
-
-# Fix by moving the text values into a new column
+# Move text fork lengths into a new column
 fd$ForkLengthText = ifelse(is.na(as.numeric(fd$`Fork Length (mm)`)), fd$`Fork Length (mm)`, NA)
-
 # Flag the text fork length data
 fd$ForkLengthFlag = ifelse(!is.na(fd$ForkLengthText),6,NA)
 
@@ -363,10 +360,8 @@ fd$Count = ifelse(
   ,fd$Count
 )
 
-
-
+# check work
 fd %>% distinct(CountText,Count,CountFlag) %>% arrange(CountText,Count)
-
 fd %>% select(Lagoon,Site,Date,CommonName,Count,CountText,CountFlag) %>% arrange(Count,CountText,CountFlag,Lagoon,Site,Date,CommonName)
 
 ```
@@ -379,60 +374,385 @@ fd %>% distinct(Long) %>% arrange(Long)
 
 
 
-# Step 4. Join the fish scientific names
+## Step 4. Join the fish scientific names
 ```{r}
 fb = dbGetQuery(connection,"SELECT * from fishbase")
 fb$CommonNameUpper = toupper(fb$FBname)
 fd$CommonNameUpper = toupper(fd$CommonName)
 x = as.data.frame(left_join(fd,fb,by='CommonNameUpper',multiple='first'))
-glimpse(x)
+# glimpse(x)
 
 ### Fix Species
-x %>% distinct(Genus,Species.y) %>% arrange(Genus,Species.y)
+# x %>% distinct(Genus,Species.y) %>% arrange(Genus,Species.y)
 
 ```
 
 
-# Step 5. Write the fish deliverable
+## Step 5. Write the fish deliverable
 
 ```{r}
 
 
-deliverable = sqldf("SELECT Date
+deliverable = x %>% select(Date
 ,Lagoon
 ,Site
 ,Family
 ,Genus
-,[Species.y] as Species
+,`Species.y`
 ,CommonName
 ,CollectionMethod
-,[Check Number] as CheckNumber
+,`Check Number` 
 ,CheckTime
 ,SetTime_Min
 ,Count,CountText,CountFlag
-,ForkLength as ForkLength_mm,ForkLengthText,ForkLengthFlag as ForkLength_Flag
-,Lat as Latitude
-,Long as Longitude
-,[Species.x] as CommonNameRecorded
-,Notes as Comments
-FROM x
-ORDER BY Date
-,Lagoon
-,Site,CollectionMethod,CheckNumber")
+,ForkLength,ForkLengthText,ForkLengthFlag
+,Lat
+,Long
+,`Species.x`
+,Notes,SiteType)
 
-
-glimpse(fd)
-library(sqldf)
-deliverable = sqldf("SELECT Date
-      ,Lagoon
-      ,Site
-      ,CollectionMethod
-      ,Family,Genus,Species,[CommonName]
-      ,ForkLength,ForkLengthText,ForkLengthFlag
-      ,Lat as Latitude,Long as Longitude
-      FROM fd")
+# deliverable = sqldf("SELECT Date
+# ,Lagoon
+# ,Site
+# ,Family
+# ,Genus
+# ,[Species.y] as Species
+# ,CommonName
+# ,CollectionMethod
+# ,[Check Number] as CheckNumber
+# ,CheckTime
+# ,SetTime_Min
+# ,Count,CountText,CountFlag
+# ,ForkLength as ForkLength_mm,ForkLengthText,ForkLengthFlag as ForkLengthFlag
+# ,Lat as Latitude
+# ,Long as Longitude
+# ,[Species.x] as CommonNameRecorded
+# ,Notes as Comments,SiteType as Site_Recorded
+# FROM x 
+# ORDER BY Date
+# ,Lagoon
+# ,Site,CollectionMethod,CheckNumber")
 
 write.csv(deliverable,paste(dir,"L11 2024 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
 
 ```
+
+
+
+
+# 2024 Deliverable L11-Fish data processing
+
+This section contains processing steps to get the fish data (Deliverable L11) processed for ingestion into the master lagoons monitoring database.
+
+## Step 1. Load the worksheet
+
+```{r}
+# Get the worksheet names
+#excel_sheets(workbook)
+
+# Load the fish data
+worksheet = "Fish Data 2024"
+fd = readxl::read_excel(workbook,worksheet)
+
+```
+
+## Step 2. Data quality checks
+
+```{r}
+
+# Use these tools to check that data types match expected attributes, statistics such as min/max, etc. are as expected
+glimpse(fd)
+
+# fd %>% distinct(Year)
+# fd %>% distinct(Date)
+# fd %>% distinct(Lagoon)
+# fd %>% distinct(Site)
+# fd %>% distinct(`Gear Type`)
+# fd %>% distinct(`Set Time (hours)`)
+# fd %>% distinct(`Check Number`)
+# fd %>% distinct(`Check Time`)
+# fd %>% distinct(Species)
+# fd %>% distinct(Year)
+# fd %>% distinct(`Fork Length (mm)`) %>% arrange(`Fork Length (mm)`)
+
+
+
+```
+
+## Step 3. Fix defects, 2024
+
+### 2024 Lagoons existence check
+
+```{r}
+# fix lagoon names
+fd$Lagoon = ifelse(fd$Lagoon=='Aniqaaq','Anigaaq',fd$Lagoon)
+fd$Lagoon = ifelse(fd$Lagoon=='Aukulaaq','Aukulak',fd$Lagoon)
+
+# offload non-existent lagoons
+fd = fd %>% filter(Lagoon != 'Rabbit Creek' & Lagoon != 'Situkuyok')
+# i don't know where rabbit creek or Situkuyok is, no spatial data
+# write to a file and filter out of the dataset
+#write.csv(fd %>% filter(Lagoon == 'Rabbit Creek'),paste(dir,"L11 Rabbit Creek Fish Data.csv",sep=""))
+#write.csv(fd %>% filter(Lagoon == 'Situkuyok'),paste(dir,"L11 Situkuyok Fish Data.csv",sep=""))
+
+
+# make sure lagoons exist
+Lagoons = as.data.frame(fd %>% distinct(Lagoon))
+
+# Rabbit Creek is not a lagoon
+for(i in 1:nrow(Lagoons)){
+  Lagoon = Lagoons[i,1]
+  cat(LagoonExists(connection,Lagoon))
+  #cat("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon," ",Exists,"\n",sep="")
+}
+
+# ValidLagoonNames = dbGetQuery(connection,"SELECT DISTINCT Lagoon FROM Lagoons ORDER BY Lagoon")
+
+
+
+```
+
+### Fix Sites
+
+```{r}
+
+
+# Fix Site names
+# in order to fix Site we need to move it's current data into SiteType
+fd$SiteType = fd$Site
+
+# glimpse(fd)
+
+# Distinct sites
+# fd %>% distinct(Site,SiteType) %>% arrange(Site)
+
+# Create site names
+fd$Site = paste(toupper(substr(fd$Lagoon,1,3)),"_",toupper(substr(fd$SiteType,1,3)), sep="")
+
+# go back and fix items
+fd$Site = ifelse(fd$SiteType=='Inflow',paste(toupper(substr(fd$Lagoon,1,3)),"_IN", sep=""),fd$Site)
+fd$Site = ifelse(fd$SiteType=='Marine Edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
+fd$Site = ifelse(fd$SiteType=='Marine edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
+fd$Site = ifelse(fd$SiteType=='Inlet Side',paste(toupper(substr(fd$Lagoon,1,3)),"_NS", sep=""),fd$Site)
+fd$Lagoon = ifelse(fd$SiteType=='River beaver lodge',"Aukulaaq",fd$Lagoon)
+fd$Site = ifelse(fd$SiteType=='River beaver lodge',paste(toupper(substr(fd$Lagoon,1,3)),"_NS", sep=""),fd$Site)
+
+# fd %>% distinct(Site)
+
+# What is River beaver lodge?
+#fd %>% filter(SiteType=='River beaver lodge')
+
+```
+
+### 2024 Sites existence check
+
+```{r}
+
+# Check sites exist, if not get insert queries
+Sites = fd %>% distinct(Lagoon,Site,Lat,Long)
+Sites
+cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
+for(i in 1:nrow(Sites)){
+  Lagoon = Sites[i,'Lagoon']
+  Site = Sites[i,'Site']
+  Lat = Sites[i,'Lat']
+  Lon = Sites[i,'Long']
+  cat(SiteExists(connection,Lagoon,Site,Lat,Lon)," -- ",i,"\n",sep="")
+}
+
+```
+
+### Fix Sampling Events
+
+```{r}
+# Fix Sites
+Events = fd %>% distinct(Lagoon,Date,Site) %>% arrange(Site)
+Events$RealDate = as.character(Events$Date)
+
+```
+
+### 2024 Sampling Events existence check
+
+```{r}
+
+cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
+cat("-- ",nrow(Events)," rows\n")
+for(i in 1:nrow(Events)){
+  Lagoon = Events[i,'Lagoon']
+  Site = Events[i,'Site']
+  Date = Events[i,'RealDate']
+  cat(SamplingEventExists(connection,Lagoon,Date,Site),"-- ",i,"\n")
+}
+
+```
+
+
+
+### Fix Gear type
+```{r}
+# Move gear type to CollectionMethod to preserve gear type
+fd$CollectionMethod = fd$`Gear Type`
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='offshore gillnet','Gillnet',fd$CollectionMethod)
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='onshore gillnet','Gillnet',fd$CollectionMethod)
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='beach Seine','Beach Seine',fd$CollectionMethod)
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='Onshore gillnet','Gillnet',fd$CollectionMethod)
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='Fike','Fyke',fd$CollectionMethod)
+
+fd %>% distinct(`Gear Type`,CollectionMethod)
+
+```
+
+### Fix Set time
+```{r}
+fd %>% distinct(`Set Time (hours)`)
+# These should be in minutes
+fd$SetTime_Min = as.integer(fd$`Set Time (hours)`*60)
+
+fd %>% distinct(`Set Time (hours)`,SetTime_Min)
+
+
+```
+
+
+### Fix Check Time
+```{r}
+fd %>% distinct(`Check Time`)
+fd$CheckTime= ifelse(!is.na(fd$`Check Time`), paste(fd$`Check Time`,":00",sep=""),NA)
+
+fd %>% distinct(CheckTime)
+
+```
+### Fix Species
+```{r}
+fd %>% distinct(Species)
+fd$CommonName = fd$Species
+
+fd$CommonName = ifelse(fd$Species=='No fish',NA,fd$CommonName)
+fd$CommonName = ifelse(fd$Species=='No Fish',NA,fd$CommonName)
+fd %>% distinct(CommonName)
+```
+
+### Fix Fork Length
+```{r}
+
+# Fork length is character because of censored data. Some values have a '+', for example
+fd$ForkLength = ifelse(is.na(as.numeric(fd$`Fork Length (mm)`)), NA, as.numeric(fd$`Fork Length (mm)`))
+# Move text fork lengths into a new column
+fd$ForkLengthText = ifelse(is.na(as.numeric(fd$`Fork Length (mm)`)), fd$`Fork Length (mm)`, NA)
+# Flag the text fork length data
+fd$ForkLengthFlag = ifelse(!is.na(fd$ForkLengthText),6,NA)
+
+# Get the numeric value of fork length text and load it into ForkLength
+fd$ForkLength = ifelse(
+  is.na(as.numeric(fd$`Fork Length (mm)`)),
+  gsub("[^0-9]", "", fd$ForkLengthText)
+  ,fd$ForkLength
+)
+#fd %>% filter(ForkLengthFlag == 6) %>% mutate(ForkLength = gsub("[^0-9]", "", ForkLengthText)) %>% select(ForkLength,ForkLengthText,ForkLengthFlag) 
+
+fd$ForkLength = ifelse(fd$ForkLength == 150300,225,fd$ForkLength)
+
+# check work
+#fd %>% select(`Fork Length (mm)`,ForkLength,ForkLengthText,ForkLengthFlag) %>% arrange(ForkLength)
+fd %>% distinct(ForkLength,`Fork Length (mm)`,ForkLengthText,ForkLengthFlag) %>% arrange(ForkLengthText)
+
+```
+
+### Fix Counts
+
+```{r}
+# Move the text counts to a new column
+fd$Count_Text  = NULL
+
+# Fix by moving the text values into a new column
+fd$CountText = ifelse(is.na(as.numeric(fd$Count)), fd$Count, NA)
+
+# Flag the text count data
+fd$CountFlag = ifelse(!is.na(fd$CountText),7,NA)
+
+# Get the numeric value of count and load it into Count
+fd$Count = ifelse(
+  is.na(as.numeric(fd$Count)),
+  gsub("[^0-9]", "", fd$CountText)
+  ,fd$Count
+)
+
+# check work
+fd %>% distinct(CountText,Count,CountFlag) %>% arrange(CountText,Count)
+fd %>% select(Lagoon,Site,Date,CommonName,Count,CountText,CountFlag) %>% arrange(Count,CountText,CountFlag,Lagoon,Site,Date,CommonName)
+
+```
+### Fix Lat Lon
+
+```{r}
+fd %>% distinct(Lat) %>% arrange(Lat)
+fd %>% distinct(Long) %>% arrange(Long)
+```
+
+
+
+## Step 4. Join the fish scientific names
+```{r}
+fb = dbGetQuery(connection,"SELECT * from fishbase")
+fb$CommonNameUpper = toupper(fb$FBname)
+fd$CommonNameUpper = toupper(fd$CommonName)
+x = as.data.frame(left_join(fd,fb,by='CommonNameUpper',multiple='first'))
+# glimpse(x)
+
+### Fix Species
+# x %>% distinct(Genus,Species.y) %>% arrange(Genus,Species.y)
+
+```
+
+
+## Step 5. Write the fish deliverable
+
+```{r}
+
+
+deliverable = x %>% select(Date
+,Lagoon
+,Site
+,Family
+,Genus
+,`Species.y`
+,CommonName
+,CollectionMethod
+,`Check Number` 
+,CheckTime
+,SetTime_Min
+,Count,CountText,CountFlag
+,ForkLength,ForkLengthText,ForkLengthFlag
+,Lat
+,Long
+,`Species.x`
+,Notes,SiteType)
+
+# deliverable = sqldf("SELECT Date
+# ,Lagoon
+# ,Site
+# ,Family
+# ,Genus
+# ,[Species.y] as Species
+# ,CommonName
+# ,CollectionMethod
+# ,[Check Number] as CheckNumber
+# ,CheckTime
+# ,SetTime_Min
+# ,Count,CountText,CountFlag
+# ,ForkLength as ForkLength_mm,ForkLengthText,ForkLengthFlag as ForkLengthFlag
+# ,Lat as Latitude
+# ,Long as Longitude
+# ,[Species.x] as CommonNameRecorded
+# ,Notes as Comments,SiteType as Site_Recorded
+# FROM x 
+# ORDER BY Date
+# ,Lagoon
+# ,Site,CollectionMethod,CheckNumber")
+
+write.csv(deliverable,paste(dir,"L11 2024 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
+
+```
+
+
 
