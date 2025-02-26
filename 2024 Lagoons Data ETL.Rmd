@@ -1,9 +1,15 @@
 ---
-title: "2024 Lagoons Data ETL"
+title: "2021/2024 Lagoons Data ETL"
 author: "SDMiller"
 date: "`r Sys.Date()`"
 output: html_document
 ---
+
+# Intro
+
+This document describes the steps I used to implement quality control on the data deliverables for 2021/2024 for ingestion into the ARCN_Lagoons database.
+
+These data were received from WCS, Kevin Fraley.
 
 # Setup
 
@@ -18,7 +24,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # library(sqldf)
 library(tidyverse)
 library(readxl)
-# library(odbc)
+library(odbc)
 # library(leaflet)
 
 connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna_dev", Database = "ARCN_Lagoons")
@@ -27,6 +33,110 @@ dir = r'(C:\Work\VitalSigns\ARCN Lagoons\Data\2024 Lagoons Sampling\Deliverables
 filename = r'(2021-2024 WCS CAKR Coastal Lagoons Data Received 2024-07-31 From KFraley.xlsx)'
 workbook = paste(dir,filename,sep="")
 
+```
+
+# Functions
+```{r}
+# Example database connection
+# connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna_dev", Database = "ARCN_Lagoons")
+
+# Function to query the lagoons database for the existence of Lagoon using the odbc database connection DatabaseConnection
+# Returns boolean.
+LagoonExists = function(DatabaseConnection, Lagoon) {
+  tryCatch({
+    # Build an SQL query
+    Sql = paste("SELECT Lagoon FROM Lagoons WHERE Lagoon = '", Lagoon, "'", sep = "")
+    
+    # Execute the query
+    result = dbGetQuery(DatabaseConnection, Sql)
+    
+    # Return true or false depending on whether we get a row or not
+    if (nrow(result) == 0) {
+      return(paste("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon,"\n",sep=""))
+    } else {
+      return(paste("-- Lagoon ",Lagoon,"Exists\n"))
+    }
+  }, error = function(e) {
+    # Bummer
+    cat("Error: ", e$message,"\n",Sql,"\n")
+    return(NULL) # or handle the error as appropriate
+  })
+}
+# Test cat(LagoonExists(connection,'Anigaaqi'))
+
+# Function to query the lagoons database for the existence of Lagoon and Site using the odbc database connection DatabaseConnection
+# Returns boolean.
+SiteExists = function(DatabaseConnection, Lagoon,Site,Lat='NULL',Lon='NULL') {
+  tryCatch({
+    # Build an SQL query
+    Sql = paste("SELECT Lagoon,Site FROM Sites WHERE Lagoon = '", Lagoon, "' And Site = '",Site,"'", sep = "")
+
+    # Execute the query
+    result = dbGetQuery(DatabaseConnection, Sql)
+    
+    # Return true or false depending on whether we get a row or not
+    if (nrow(result) == 0) {
+      
+      if(is.na(Lat) | Lat == 0){
+        return(paste("INSERT INTO Sites(Lagoon,Site,Latitude,Longitude)VALUES('",Lagoon,"','",Site,"',NULL,NULL)",sep=""))
+      } else {
+        return(paste("INSERT INTO Sites(Lagoon,Site,Latitude,Longitude)VALUES('",Lagoon,"','",Site,"',",Lat,",",Lon,")",sep=""))
+      }
+
+    } else {
+      return(paste("-- Site ",Lagoon,"-",Site,"Exists"))
+    }
+    
+  }, error = function(e) {
+    # Bummer
+    cat("Error: ", e$message,"\n",Sql,"\n")
+    return(NULL) # or handle the error as appropriate
+  })
+}
+# cat(SiteExists(connection,'Anigaaq','ANI_ME',65,-157),sep="")
+# cat(SiteExists(connection,'Anigaaq','ANI_ME',0,0),sep="")
+# cat(SiteExists(connection,'Anigaaq','ANI_ME',NA,NA),sep="")
+# cat(SiteExists(connection,'Anigaaq','ANI_ME'),sep="")
+
+
+# Function to query the lagoons database for the existence of a lagoons sampling event using the odbc database connection DatabaseConnection
+# Returns boolean.
+SamplingEventExists = function(DatabaseConnection, Lagoon,Date,Site) {
+  tryCatch({
+    # Build an SQL query
+    Sql = paste("SELECT Lagoon,[Date],Site FROM SamplingEvents WHERE Lagoon = '", Lagoon, "' And [Date] = '",Date,"' And Site = '",Site,"'", sep = "")
+
+    # Execute the query
+    result = dbGetQuery(DatabaseConnection, Sql)
+    
+    
+    # Return true or false depending on whether we get a row or not
+    if (nrow(result) == 0) {
+        return(paste("INSERT INTO SamplingEvents(Lagoon,Site,Date)VALUES('",Lagoon,"','",Site,"','",Date,"')",sep=""))
+    } else {
+      return(paste("-- Site ",Lagoon,"-",Site,"Exists"))
+    }
+    
+    
+  }, error = function(e) {
+    # Bummer
+    cat("Error: ", e$message,"\n",Sql,"\n")
+    return(NULL) # or handle the error as appropriate
+  })
+}
+#cat(SamplingEventExists(connection,'Anigaaq','2024-06-23','ANI_ME'))
+
+
+# Filters FishData for CommonName (match case) and updates the records with Family,Genus,Species
+# UpdateFishTaxa = function(CommonName,Family,Genus,Species){
+#   cat(CommonName,Family,Genus,Species,FishData$CommonName,FishData$CommonName==CommonName,"\n",sep="")
+#   FishData$Family = ifelse(FishData$CommonName==CommonName,'Gasterosteidae',FishData$Family)
+#   FishData$Genus = ifelse(FishData$CommonName==CommonName,'Gasterosteus',FishData$Genus)
+#   FishData$Species = ifelse(FishData$CommonName==CommonName,'Gasterosteus',FishData$Species)
+# }
+# UpdateFishTaxa('Juvenile salmon','Salmonidae','Onchorhynchus','spp.')
+# # Find out which species didn't map
+# FishData %>% filter(is.na(Genus)==TRUE) %>% distinct(CommonName)
 ```
 
 # Deliverable L11-Fish data processing
@@ -45,215 +155,253 @@ fd = readxl::read_excel(workbook,worksheet)
 
 ```
 
-## Step 2. Check data types
+## Step 2. Data quality checks
 
 ```{r}
 
 # Use these tools to check that data types match expected attributes, statistics such as min/max, etc. are as expected
-# glimpse(fd)
+glimpse(fd)
 
 # view(fd)
 
+fd %>% distinct(Year)
+fd %>% distinct(Date)
+fd %>% distinct(Lagoon)
+fd %>% distinct(Site)
+fd %>% distinct(`Gear Type`)
+fd %>% distinct(`Set Time (hours)`)
+fd %>% distinct(`Check Number`)
+fd %>% distinct(`Check Time`)
+fd %>% distinct(Species)
+fd %>% distinct(Year)
+fd %>% distinct(`Fork Length (mm)`) %>% arrange(`Fork Length (mm)`)
+fd %>% distinct(ForkLength) %>% arrange(`Fork Length (mm)`)
+
 
 ```
 
-## Step 3. Fix defects
+## Step 3. Fix defects, 2024
+
+### 2024 Lagoons existence check
 
 ```{r}
-# Dates are not real dates
-fd$Date = as.Date(fd$Date)
+# make sure lagoons exist
+Lagoons = as.data.frame(fd %>% distinct(Lagoon))
+# Rabbit Creek is not a lagoon
+for(i in 1:nrow(Lagoons)){
+  Lagoon = Lagoons[i,1]
+  cat(LagoonExists(connection,Lagoon))
+  #cat("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon," ",Exists,"\n",sep="")
+}
+
+# fix Aniqaaq
+fd$Lagoon = ifelse(fd$Lagoon=='Aniqaaq','Anigaaq',fd$Lagoon)
+
+# i don't know where rabbit creek or Situkuyok is, no spatial data
+# write to a file and filter out of the dataset
+#write.csv(fd %>% filter(Lagoon == 'Rabbit Creek'),paste(dir,"L11 Rabbit Creek Fish Data.csv",sep=""))
+#write.csv(fd %>% filter(Lagoon == 'Situkuyok'),paste(dir,"L11 Situkuyok Fish Data.csv",sep=""))
+fd = fd %>% filter(Lagoon != 'Rabbit Creek' & Lagoon != 'Situkuyok')
 
 ```
 
-
-# Step 1. Ensure the Lagoons in the Water Quality worksheet validate with standard Lagoon names in the database
-
-Lagoons must match existing lagoons, as spelled in the database Lagoons table.
+### 2024 Sites existence check
 
 ```{r}
-
-# First, make sure the lagoons exist in the lagoons table
-x = as.data.frame(wq %>% distinct(Lagoon))
-for(i in 1:nrow(x)){
-  y=x[i,1]
-  sql = paste("SELECT * FROM Lagoons WHERE Lagoon='",y,"' -- INSERT INTO Lagoons(Lagoon)VALUES('",y,"')\n",sep="")
-  cat(sql)
+# Fix Sites
+Sites = fd %>% distinct(Lagoon,Site,Lat,Long)
+Sites
+cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
+for(i in 1:nrow(Sites)){
+  Lagoon = Sites[i,'Lagoon']
+  Site = Sites[i,'Site']
+  Lat = Sites[i,'Lat']
+  Lon = Sites[i,'Long']
+  cat(SiteExists(connection,Lagoon,Site,Lat,Lon)," -- ",i,"\n",sep="")
 }
 
 ```
 
-# Insert the Sites if they don't exist
+### 2024 Sampling Events existence check
 
 ```{r}
-
-
-# Check that the field sites exist in the Sites database table. If the field sites do not exist in the database then those records will be rejected by the database.
-# This code writes to standard output a set of SELECT queries that can be executed against the database. If any SELECT queries return zero results, then you must INSERT the site using the accompanying INSERT query.
-x = as.data.frame(wq %>% distinct(Lagoon,Location))
-SourceFile='L10 2024 Lagoons Discrete Water Quality Data.csv'
-for(i in 1:nrow(x)){
-  Lagoon=x[i,1]
-  Site = x[i,2]
-  sql = paste("SELECT * FROM Sites WHERE Lagoon='",Lagoon,"' And  Site='",Site,"'\n -- INSERT INTO Sites(Lagoon,Site,SourceFile)VALUES('",Lagoon,"','",Site,"','",SourceFile,"')\n",sep="")
-  cat(sql)
+# Fix Sites
+Events = fd %>% distinct(Lagoon,Date,Site)
+Events$RealDate = as.character(Events$Date)
+Events
+glimpse(Events)
+cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
+cat("-- ",nrow(Events)," rows\n")
+for(i in 1:nrow(Events)){
+  Lagoon = Events[i,'Lagoon']
+  Site = Events[i,'Site']
+  Date = Events[i,'RealDate']
+  cat(SamplingEventExists(connection,Lagoon,Date,Site),"-- ",i,"\n")
 }
-# The sites should all exist now
 
 ```
 
-# Insert sampling events
-
+### Fix Gear type
 ```{r}
-# Next insert the sampling events
+# Move gear type to CollectionMethod to preserve gear type
+fd$CollectionMethod = fd$`Gear Type`
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='offshore gillnet','Gillnet',fd$CollectionMethod)
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='onshore gillnet','Gillnet',fd$CollectionMethod)
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='beach Seine','Beach Seine',fd$CollectionMethod)
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='Onshore gillnet','Gillnet',fd$CollectionMethod)
+fd$CollectionMethod = ifelse(fd$`Gear Type`=='Fike','Fyke',fd$CollectionMethod)
 
-x = as.data.frame(wq %>% distinct(Lagoon,Location,Date))
-SourceFile='L10 2024 Lagoons Discrete Water Quality Data.csv'
-Output = 'BEGIN TRANSACTION -- COMMIT ROLLBACK\n'
-for(i in 1:nrow(x)){
-  Lagoon=x[i,1]
-  Site = x[i,2]
-  Date=x[i,3]
-  Sql = paste("INSERT INTO SamplingEvents(Lagoon,Site,Date,SourceFile)VALUES('",Lagoon,"','",Site,"','",Date,"','",SourceFile,"')\n",sep="")
-  Output = paste(Output,Sql,sep="")
-}
-write(Output,paste(dir,"INSERT SamplingEvents.sql",sep=""))
+fd %>% distinct(`Gear Type`,CollectionMethod)
 
 ```
 
-# Insert discrete water quality data
+### Fix Set time
+```{r}
+fd %>% distinct(`Set Time (hours)`)
+# These should be in minutes
+fd$SetTime_Min = as.integer(fd$`Set Time (hours)`*60)
+
+fd %>% distinct(`Set Time (hours)`,SetTime_Min)
+
+
+```
+
+
+### Fix Check Time
+```{r}
+fd %>% distinct(`Check Time`)
+fd$CheckTime= ifelse(!is.na(fd$`Check Time`), paste(fd$`Check Time`,":00",sep=""),NA)
+
+fd %>% distinct(CheckTime)
+
+```
+### Fix Species
+```{r}
+fd %>% distinct(Species)
+fd$CommonName = fd$Species
+
+fd$CommonName = ifelse(fd$Species=='No fish',NA,fd$CommonName)
+fd$CommonName = ifelse(fd$Species=='No Fish',NA,fd$CommonName)
+fd %>% distinct(CommonName)
+```
+
+### Fix Fork Length
+```{r}
+
+# Fork length is character because of censored data. Some values have a '+', for example
+fd$ForkLength = ifelse(is.na(as.numeric(fd$`Fork Length (mm)`)), NA, as.numeric(fd$`Fork Length (mm)`))
+
+# Fix by moving the text values into a new column
+fd$ForkLengthText = ifelse(is.na(as.numeric(fd$`Fork Length (mm)`)), fd$`Fork Length (mm)`, NA)
+
+# Flag the text fork length data
+fd$ForkLengthFlag = ifelse(!is.na(fd$ForkLengthText),6,NA)
+
+# Get the numeric value of fork length text and load it into ForkLength
+fd$ForkLength = ifelse(
+  is.na(as.numeric(fd$`Fork Length (mm)`)),
+  gsub("[^0-9]", "", fd$ForkLengthText)
+  ,fd$ForkLength
+)
+#fd %>% filter(ForkLengthFlag == 6) %>% mutate(ForkLength = gsub("[^0-9]", "", ForkLengthText)) %>% select(ForkLength,ForkLengthText,ForkLengthFlag) 
+
+fd$ForkLength = ifelse(fd$ForkLength == 150300,225,fd$ForkLength)
+
+# check work
+#fd %>% select(`Fork Length (mm)`,ForkLength,ForkLengthText,ForkLengthFlag) %>% arrange(ForkLength)
+fd %>% distinct(ForkLength,`Fork Length (mm)`,ForkLengthText,ForkLengthFlag) %>% arrange(ForkLengthText)
+
+```
+
+### Fix Counts
 
 ```{r}
-# Do a little quality control
-# glimpse(wq)
-# # ODO mg/L is all NULLs
-# wq %>% distinct(`ODO mg/L`)
-# # Notes is all NULLs
-# wq %>% distinct(NOTES)
-# library(summarytools)
-# descr(wq)
-# str(wq)
+# Move the text counts to a new column
+fd$Count_Text  = NULL
+
+# Fix by moving the text values into a new column
+fd$CountText = ifelse(is.na(as.numeric(fd$Count)), fd$Count, NA)
+
+# Flag the text count data
+fd$CountFlag = ifelse(!is.na(fd$CountText),7,NA)
+
+# Get the numeric value of count and load it into Count
+fd$Count = ifelse(
+  is.na(as.numeric(fd$Count)),
+  gsub("[^0-9]", "", fd$CountText)
+  ,fd$Count
+)
 
 
-wq %>% mutate(DateAK = with_tz(Date, tzone = "America/Anchorage"))
-wq$SPC = wq$`SPC (µS/cm)`
-wq$SPC
-CSVFile='L10 2024 Lagoons Discrete Water Quality Data.csv'
-SqlFile=paste(CSVFile,".sql",sep="")
-Output = 'BEGIN TRANSACTION -- COMMIT ROLLBACK\n'
-for(i in 1:nrow(wq)){
-  Lagoon = ifelse(is.na(wq[i, 'Lagoon']),'NULL', wq[i, 'Lagoon'])
-  Date = ifelse(is.na(wq[i, 'DateAK']),'NULL', wq[i, 'DateAK'])
-  Location = ifelse(is.na(wq[i, 'Location']),'NULL', wq[i, 'Location'])
-  TEMP = ifelse(is.na(wq[i, 'TEMP (Celsius)']),'NULL', wq[i, 'TEMP (Celsius)'])
-  SPC = wq[i, 'SPC']
-  Salinity = ifelse(is.na(wq[i, 'Salinity (ppt)']),'NULL', wq[i, 'Salinity (ppt)'])
-  ODOPct = ifelse(is.na(wq[i, 'ODO%']),'NULL', wq[i, 'ODO%'])
-  ODOmgL = ifelse(is.na(wq[i, 'ODO mg/L']),'NULL', wq[i, 'ODO mg/L'])
-  pH = ifelse(is.na(wq[i, 'pH']),'NULL', wq[i, 'pH'])
-  ChlorophylRFU = ifelse(is.na(wq[i, 'Chlorophyl RFU']),'NULL', wq[i, 'Chlorophyl RFU'])
-  BGARFU = ifelse(is.na(wq[i, 'BGA RFU']),'NULL', wq[i, 'BGA RFU'])
-  TurbidityFNU = ifelse(is.na(wq[i, 'Turbidity (FNU)']),'NULL', wq[i, 'Turbidity (FNU)'])
-  NOTES = ifelse(is.na(wq[i, 'NOTES']),'NULL', wq[i, 'NOTES'])
 
-    Sql = paste("INSERT INTO WaterQualityDiscrete(
-Year
+fd %>% distinct(CountText,Count,CountFlag) %>% arrange(CountText,Count)
+
+fd %>% select(Lagoon,Site,Date,CommonName,Count,CountText,CountFlag) %>% arrange(Count,CountText,CountFlag,Lagoon,Site,Date,CommonName)
+
+```
+### Fix Lat Lon
+
+```{r}
+fd %>% distinct(Lat) %>% arrange(Lat)
+fd %>% distinct(Long) %>% arrange(Long)
+```
+
+
+
+# Step 4. Join the fish scientific names
+```{r}
+fb = dbGetQuery(connection,"SELECT * from fishbase")
+fb$CommonNameUpper = toupper(fb$FBname)
+fd$CommonNameUpper = toupper(fd$CommonName)
+x = as.data.frame(left_join(fd,fb,by='CommonNameUpper',multiple='first'))
+glimpse(x)
+
+### Fix Species
+x %>% distinct(Genus,Species.y) %>% arrange(Genus,Species.y)
+
+```
+
+
+# Step 5. Write the fish deliverable
+
+```{r}
+
+
+deliverable = sqldf("SELECT Date
 ,Lagoon
 ,Site
-,Date
-,LocationDescription
-,[Temperature (C)]
-,[Conductivity (uS/cm)]
-,[Salinity (ppt)]
-,[Dissolved Oxygen (% sat)]
-,[Dissolved Oxygen (mg/l)]
-,[pH]
-,[Chlorophyll (RFU)]
-,[Blue-green Algae  (RFU)]
-,[Turbidity (FNU)]
-,SourceFile)VALUES(
-'",Lagoon,"'
-,'",Site,"'
-,'",Date,"'
-,'",Location,"'
-,",TEMP,"
-,",SPC,"
-,",Salinity,"
-,",ODOPct,"
-,",ODOmgL,"
-,",pH,"
-,",ChlorophylRFU,"
-,",BGARFU,"
-,",TurbidityFNU,"
-,'",SourceFile,"')\n",sep="")
-  Output = paste(Output,Sql,sep="")
-}
-write(Output,paste(dir,SqlFile,sep=""))
-write.table(wq,paste(dir,CSVFile,sep=""),row.names = FALSE,na = "NULL",quote = FALSE,sep = ",")
-writexl::write_xlsx(wq,paste(dir,CSVFile,".xlsx",sep=""))
-# pre-print columnname definitions
-# for (colname in colnames(wq)) {
-#   
-#   cat(gsub(')','',gsub(' ','',colname))," = wq[i,'",colname,"']","\n",sep="")
-# }
-
-```
+,Family
+,Genus
+,[Species.y] as Species
+,CommonName
+,CollectionMethod
+,[Check Number] as CheckNumber
+,CheckTime
+,SetTime_Min
+,Count,CountText,CountFlag
+,ForkLength as ForkLength_mm,ForkLengthText,ForkLengthFlag as ForkLength_Flag
+,Lat as Latitude
+,Long as Longitude
+,[Species.x] as CommonNameRecorded
+,Notes as Comments
+FROM x
+ORDER BY Date
+,Lagoon
+,Site,CollectionMethod,CheckNumber")
 
 
+glimpse(fd)
+library(sqldf)
+deliverable = sqldf("SELECT Date
+      ,Lagoon
+      ,Site
+      ,CollectionMethod
+      ,Family,Genus,Species,[CommonName]
+      ,ForkLength,ForkLengthText,ForkLengthFlag
+      ,Lat as Latitude,Long as Longitude
+      FROM fd")
 
-# WQ EA INSERT
-
-The below was a test to see how hard it would be to extract and store the WQD data as entity/value pairs. It proved difficult but could be useful for parameters that fall outsite the 'standard' ones described by the protocol.
-
-```{r}
-wq = readxl::read_excel(workbook,worksheet)
-wq = as.data.frame(wq)
-# glimpse(wq)
-# Next insert the data
-
-# Output = 'BEGIN TRANSACTION -- COMMIT ROLLBACK\n'
-# 
-# GetInsertQuery = function(ColumnName,DesiredColumnName,Units){
-#   for(i in 1:nrow(wq)){
-#     Lagoon = wq[i,'Lagoon']
-#     Date  = wq[i,'Date']
-#     Site  = wq[i,'Location']
-#     Entity = ColumnName
-#     Value = wq[i,ColumnName]
-#     
-#     Sql = paste("INSERT INTO [dbo].[WaterQualityDiscreteEA]
-#            ([Lagoon]
-#            ,[Site]
-#            ,[Date]
-#            ,[Entity]
-#            ,[Value]
-#            ,[SampleDepth_m]
-#            ,[Units]
-#            ,SourceFile)
-#      VALUES
-#            ('",Lagoon,"'
-#            ,'",Site,"'
-#            ,'",Date,"'
-#            ,'",DesiredColumnName,"'
-#            ,",wq[i,ColumnName],"
-#            ,NULL
-#            ,'",Units,"'
-#            ,'",SourceFile,"')\n\n",sep="")
-#     Output = paste(Output,Sql,sep="")
-#   }
-#   return(Output)
-# }
-# ColumnName = 'TEMP (Celsius)'
-# DesiredColumnName = 'Temperature'
-# Units = 'C'
-# Queries = GetInsertQuery(ColumnName,DesiredColumnName,Units)
-# OutputFilename = paste(dir,"INSERT ",DesiredColumnName,".sql",sep="")
-# write(Queries,OutputFilename)
-
-# pre-print columnname definitions
-# for (colname in colnames(wq)) {
-#   cat(colname," = wq[i,'",colname,"']","\n")
-# }
-
+write.csv(deliverable,paste(dir,"L11 2024 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
 
 ```
 
