@@ -52,9 +52,9 @@ LagoonExists = function(DatabaseConnection, Lagoon) {
     
     # Return true or false depending on whether we get a row or not
     if (nrow(result) == 0) {
-      return(paste("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon,"\n",sep=""))
+      return(paste("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon," Does not exist\n",sep=""))
     } else {
-      return(paste("-- Lagoon ",Lagoon,"Exists\n"))
+      return(paste("SELECT * FROM Lagoons WHERE Lagoon = '",Lagoon,"') -- ",Lagoon," Exists\n",sep=""))
     }
   }, error = function(e) {
     # Bummer
@@ -84,7 +84,7 @@ SiteExists = function(DatabaseConnection, Lagoon,Site,Lat='NULL',Lon='NULL') {
       }
 
     } else {
-      return(paste("-- Site ",Lagoon,"-",Site,"Exists"))
+      return(paste("SELECT * FROM Sites WHERE Site = '",Site,"' -- ",Site," Exists\n",sep=""))
     }
     
   }, error = function(e) {
@@ -96,7 +96,7 @@ SiteExists = function(DatabaseConnection, Lagoon,Site,Lat='NULL',Lon='NULL') {
 # cat(SiteExists(connection,'Anigaaq','ANI_ME',65,-157),sep="")
 # cat(SiteExists(connection,'Anigaaq','ANI_ME',0,0),sep="")
 # cat(SiteExists(connection,'Anigaaq','ANI_ME',NA,NA),sep="")
-# cat(SiteExists(connection,'Anigaaq','ANI_ME'),sep="")
+# cat(SiteExists(connection,'Anigaaq','ANI_NS'),sep="")
 
 
 # Function to query the lagoons database for the existence of a lagoons sampling event using the odbc database connection DatabaseConnection
@@ -112,9 +112,9 @@ SamplingEventExists = function(DatabaseConnection, Lagoon,Date,Site) {
     
     # Return true or false depending on whether we get a row or not
     if (nrow(result) == 0) {
-        return(paste("INSERT INTO SamplingEvents(Lagoon,Site,Date)VALUES('",Lagoon,"','",Site,"','",Date,"')",sep=""))
+        return(paste("INSERT INTO SamplingEvents(Lagoon,Site,Date)VALUES('",Lagoon,"','",Site,"','",Date,"'",sep=""))
     } else {
-      return(paste("-- Site ",Lagoon,"-",Site,"Exists"))
+      return(paste("SELECT * FROM SamplingEvents WHERE Lagoon='",Lagoon,"' And Site = '",Site,"' And [Date] = '",Date,"' -- ",Site," Exists\n",sep=""))
     }
     
     
@@ -187,6 +187,7 @@ fd %>% distinct(ForkLength) %>% arrange(`Fork Length (mm)`)
 ```{r}
 # make sure lagoons exist
 Lagoons = as.data.frame(fd %>% distinct(Lagoon))
+
 # Rabbit Creek is not a lagoon
 for(i in 1:nrow(Lagoons)){
   Lagoon = Lagoons[i,1]
@@ -194,8 +195,11 @@ for(i in 1:nrow(Lagoons)){
   #cat("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon," ",Exists,"\n",sep="")
 }
 
-# fix Aniqaaq
+ValidLagoonNames = dbGetQuery(connection,"SELECT DISTINCT Lagoon FROM Lagoons ORDER BY Lagoon")
+
+# fix lagoon names
 fd$Lagoon = ifelse(fd$Lagoon=='Aniqaaq','Anigaaq',fd$Lagoon)
+fd$Lagoon = ifelse(fd$Lagoon=='Aukulaaq','Aukulak',fd$Lagoon)
 
 # i don't know where rabbit creek or Situkuyok is, no spatial data
 # write to a file and filter out of the dataset
@@ -208,7 +212,32 @@ fd = fd %>% filter(Lagoon != 'Rabbit Creek' & Lagoon != 'Situkuyok')
 ### 2024 Sites existence check
 
 ```{r}
-# Fix Sites
+
+
+# Fix Site names
+# in order to fix Site we need to move it's current data into SiteType
+fd$SiteType = fd$Site
+
+glimpse(fd)
+
+# Distinct sites
+fd %>% distinct(Site,SiteType) %>% arrange(Site)
+
+# Create site names
+fd$Site = paste(toupper(substr(fd$Lagoon,1,3)),"_",toupper(substr(fd$SiteType,1,3)), sep="")
+
+# go back and fix items
+fd$Site = ifelse(fd$SiteType=='Inflow',paste(toupper(substr(fd$Lagoon,1,3)),"_IN", sep=""),fd$Site)
+fd$Site = ifelse(fd$SiteType=='Marine Edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
+fd$Site = ifelse(fd$SiteType=='Marine edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
+fd$Site = ifelse(fd$SiteType=='Inlet Side',paste(toupper(substr(fd$Lagoon,1,3)),"_NS", sep=""),fd$Site)
+fd$Lagoon = ifelse(fd$SiteType=='River beaver lodge',"Aukulaaq",fd$Lagoon)
+fd$Site = ifelse(fd$SiteType=='River beaver lodge',paste(toupper(substr(fd$Lagoon,1,3)),"_NS", sep=""),fd$Site)
+
+# What is River beaver lodge?
+fd %>% filter(SiteType=='River beaver lodge')
+
+# Check sites exist, if not get insert queries
 Sites = fd %>% distinct(Lagoon,Site,Lat,Long)
 Sites
 cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
@@ -240,6 +269,8 @@ for(i in 1:nrow(Events)){
 }
 
 ```
+
+
 
 ### Fix Gear type
 ```{r}
