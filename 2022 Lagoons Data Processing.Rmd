@@ -1,0 +1,400 @@
+---
+title: "2022 Lagoons Preliminary Data Quality Assessment"
+author: "SDMiller"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(tidyverse)
+library(readxl)
+library(tidyverse)
+library(sqldf)
+library(lubridate)
+
+connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna_dev", Database = "ARCN_Lagoons")
+
+dir = r'(C:\Work\VitalSigns\ARCN Lagoons\Data\2022 Lagoons Sampling\Data processing/)' # copied local for speed
+xlfile = paste(dir,'CAKR 2022 fish and water quality data.xlsx',sep="")
+Year=2022
+
+```
+
+# Functions
+```{r}
+# Example database connection
+# connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna_dev", Database = "ARCN_Lagoons")
+
+# Function to query the lagoons database for the existence of Lagoon using the odbc database connection DatabaseConnection
+# Returns boolean.
+LagoonExists = function(DatabaseConnection, Lagoon) {
+  tryCatch({
+    # Build an SQL query
+    Sql = paste("SELECT Lagoon FROM Lagoons WHERE Lagoon = '", Lagoon, "'", sep = "")
+    
+    # Execute the query
+    result = dbGetQuery(DatabaseConnection, Sql)
+    
+    # Return true or false depending on whether we get a row or not
+    if (nrow(result) == 0) {
+      return(FALSE)
+    } else {
+      return(TRUE)
+    }
+  }, error = function(e) {
+    # Bummer
+    cat("Error: ", e$message,"\n",Sql,"\n")
+    return(NULL) # or handle the error as appropriate
+  })
+}
+# Test cat(LagoonExists(connection,'Anigaaq'))
+
+# Function to query the lagoons database for the existence of Lagoon and Site using the odbc database connection DatabaseConnection
+# Returns boolean.
+SiteExists = function(DatabaseConnection, Lagoon,Site) {
+  tryCatch({
+    # Build an SQL query
+    Sql = paste("SELECT Lagoon,Site FROM Sites WHERE Lagoon = '", Lagoon, "' And Site = '",Site,"'", sep = "")
+
+    # Execute the query
+    result = dbGetQuery(DatabaseConnection, Sql)
+    
+    # Return true or false depending on whether we get a row or not
+    if (nrow(result) == 0) {
+      return(FALSE)
+    } else {
+      return(TRUE)
+    }
+  }, error = function(e) {
+    # Bummer
+    cat("Error: ", e$message,"\n",Sql,"\n")
+    return(NULL) # or handle the error as appropriate
+  })
+}
+# Test cat(SiteExists(connection,'Anigaaq','ANI_M'))
+
+
+# Function to query the lagoons database for the existence of a lagoons sampling event using the odbc database connection DatabaseConnection
+# Returns boolean.
+SamplingEventExists = function(DatabaseConnection, Lagoon,Site,Date) {
+  tryCatch({
+    # Build an SQL query
+    Sql = paste("SELECT Lagoon,Site,[Date] FROM SamplingEvents WHERE Lagoon = '", Lagoon, "' And Site = '",Site,"' And [Date] = '",Date,"'", sep = "")
+
+    # Execute the query
+    result = dbGetQuery(DatabaseConnection, Sql)
+    
+    # Return true or false depending on whether we get a row or not
+    if (nrow(result) == 0) {
+      return(FALSE)
+    } else {
+      return(TRUE)
+    }
+  }, error = function(e) {
+    # Bummer
+    cat("Error: ", e$message,"\n",Sql,"\n")
+    return(NULL) # or handle the error as appropriate
+  })
+}
+# Test cat(SamplingEventExists(connection,'Anigaaq','ANI_I','2024-06-23'))
+
+
+# Filters FishData for CommonName (match case) and updates the records with Family,Genus,Species
+# UpdateFishTaxa = function(CommonName,Family,Genus,Species){
+#   cat(CommonName,Family,Genus,Species,FishData$CommonName,FishData$CommonName==CommonName,"\n",sep="")
+#   FishData$Family = ifelse(FishData$CommonName==CommonName,'Gasterosteidae',FishData$Family)
+#   FishData$Genus = ifelse(FishData$CommonName==CommonName,'Gasterosteus',FishData$Genus)
+#   FishData$Species = ifelse(FishData$CommonName==CommonName,'Gasterosteus',FishData$Species)
+# }
+# UpdateFishTaxa('Juvenile salmon','Salmonidae','Onchorhynchus','spp.')
+# # Find out which species didn't map
+# FishData %>% filter(is.na(Genus)==TRUE) %>% distinct(CommonName)
+```
+
+
+
+# Data file to ARCN_Lagoons database processing steps
+
+
+
+# Fish
+
+## Load fish data
+```{r}
+
+# Get the sheets: excel_sheets(xlfile)
+cat(xlfile,"\n")
+Worksheet = paste("Fish data",sep="")
+
+# Fish data
+FishData = read_excel(xlfile,Worksheet)
+FishData$Date = as.Date(FishData$Date) # dates to real dates
+
+glimpse(FishData)
+```
+
+## Lagoons exist check
+```{r}
+
+# Check lagoons exist
+Lagoons  = FishData %>% distinct(Lagoon) %>% arrange(Lagoon)
+for (i in 1:nrow(Lagoons)){
+  Lagoon = unlist(Lagoons[i,'Lagoon'])
+  cat(Lagoon," exists: ",LagoonExists(connection,Lagoon),"\n")
+}
+
+```
+
+## Sites exist check
+```{r}
+
+# Check sites exist
+Sites  = FishData %>% distinct(Lagoon,Site) %>% arrange(Lagoon,Site)
+for (i in 1:nrow(Sites)){
+  Lagoon = unlist(Sites[i,'Lagoon'])
+  Site = unlist(Sites[i,'Site'])
+  cat(i," ",Lagoon,"-",Site," exists: ",SiteExists(connection,Lagoon,Site),"\n")
+}
+
+```
+
+## Sampling events exist
+```{r}
+# Check sampling events exist
+Events  = FishData %>% distinct(Lagoon,Site,Date) %>% arrange(Lagoon,Site,Date)
+Events$DateText = as.character(Events$Date)
+cat("begin transaction -- commit rollback\n")
+for (i in 1:nrow(Events)){
+  Lagoon = unlist(Events[i,'Lagoon'])
+  Site = unlist(Events[i,'Site'])
+  Date = unlist(Events[i,'DateText'])
+  Exists = SamplingEventExists(connection,Lagoon,Site,Date)
+  
+  if(Exists==TRUE){
+    cat("-- ",i," ",Lagoon,"-",Site,", ",Date," exists: ",Exists,"\n",sep="")
+  }else{
+    cat("INSERT INTO SamplingEvents(Lagoon,Site,StartDateTime)VALUES('",Lagoon,"','",Site,"','",Date,"'); -- ",i,"\n",sep="")
+  }
+}
+
+```
+
+## Fix problems
+
+```{r}
+# unmatched species
+# FishData %>% filter(is.na(CommonName)==TRUE) %>% distinct(CommonName)
+# FishData$SetTime_Min = as.integer(FishData$`Set Time`)
+# 
+# glimpse(FishData)
+
+
+
+
+```
+
+## Join to species
+
+```{r}
+
+# Convert common names to scientific
+# Get the FishBase data to convert common names to scientific, convert common names to upper case
+FB = dbGetQuery(connection,"SELECT  [Genus],[Species],[Family],upper([FBname]) as FBname   FROM [ARCN_Lagoons].[dbo].[FishBase]")
+
+# Filter out null common names, they won't help us, and ensure Family,Genus,Species is unique
+FB2 = FB %>% filter(!is.na(FBname)) %>% distinct(Family,Genus,Species,FBname)
+
+# glimpse(FB)
+
+# Next, Join data frames on different key column names
+# the join will work better on common name upper case values
+FishData$CommonNameUpper = toupper(FishData$CommonName) 
+
+# Join FishData to FishBase database on CommonNameUpper and FBName (changed to upper case in the Sql query)
+FishData = left_join(FishData,FB2,by=c("CommonNameUpper"="FBname"))
+#FishData %>% select(CommonName,CommonNameUpper,Family,Genus,Species)
+
+
+# Fix species
+
+# # Gasterosteidae	Gasterosteus	Gasterosteus	Threespine stickleback
+# cn = "Threespine stickleback"
+# FishData$Family = ifelse(FishData$CommonName==cn,'Gasterosteidae',FishData$Family)
+# FishData$Genus = ifelse(FishData$CommonName==cn,'Gasterosteus',FishData$Genus)
+# FishData$Species = ifelse(FishData$CommonName==cn,'Gasterosteus',FishData$Species)
+# 
+# # Cottidae	Gymnocanthus	tricuspis	Arctic Staghorn Sculpin
+# cn = "Sculpin"
+# FishData$Family = ifelse(FishData$CommonName==cn,'Cottidae',FishData$Family)
+# FishData$Genus = ifelse(FishData$CommonName==cn,'Gymnocanthus',FishData$Genus)
+# FishData$Species = ifelse(FishData$CommonName==cn,'tricuspis',FishData$Species)
+# 
+# 
+# cn = "Dolly varden"
+# # Genus	Species	Family	FBname
+# # Salvelinus	malma	Salmonidae	Dolly varden
+# #FishData$CommonName = ifelse(FishData$CommonName=='Dolly Varden','Dolly varden',FishData$CommonName)
+# FishData$Family = ifelse(FishData$CommonName==cn,'Salmonidae',FishData$Family)
+# FishData$Genus = ifelse(FishData$CommonName==cn,'Salvelinus',FishData$Genus)
+# FishData$Species = ifelse(FishData$CommonName==cn,'malma',FishData$Species)
+# 
+cn = "Juvenile salmon"
+FishData$Family = ifelse(FishData$CommonName==cn,'Salmonidae',FishData$Family)
+FishData$Genus = ifelse(FishData$CommonName==cn,'Onchorhynchus',FishData$Genus)
+FishData$Species = ifelse(FishData$CommonName==cn,'spp.',FishData$Species)
+
+cn = "Pighead stickleback"
+FishData$Family = ifelse(FishData$CommonName==cn,'Stichaeidae',FishData$Family)
+FishData$Genus = ifelse(FishData$CommonName==cn,'Acantholumpenus',FishData$Genus)
+FishData$Species = ifelse(FishData$CommonName==cn,'mackayi',FishData$Species)
+
+cn = "Juvenile sculpin"
+FishData$Family = ifelse(FishData$CommonName==cn,'Cottidae',FishData$Family)
+
+
+# cn = "Juvenile flounder"
+# FishData$Family = ifelse(FishData$CommonName==cn,'Pleuronectidae',FishData$Family)
+#FishData$Genus = ifelse(FishData$CommonName==cn,NA,FishData$Genus)
+#FishData$Species = ifelse(FishData$CommonName==cn,NA,FishData$Species)
+
+
+# Find out which species didn't map
+FishData %>% filter(is.na(Genus)==TRUE) %>% distinct(CommonName)
+
+```
+
+## Write the fish deliverable
+
+```{r}
+# Write the fish deliverable 
+writexl::write_xlsx(FishData,paste(dir,"L11 ",Year," Lagoons Sampling Fish Data.xlsx",sep=""))
+
+
+```
+
+
+
+# Water data
+```{r}
+Worksheet = paste("Water Data ",Year,sep="")
+Worksheet = "Water quality"
+excel_sheets(xlfile)
+cat(xlfile)
+WaterData = read_excel(xlfile,Worksheet)
+WaterData$Date = as.Date(WaterData$Date)
+glimpse(WaterData)
+
+```
+
+## Lagoons exist check
+```{r}
+
+# Check lagoons exist
+Lagoons  = WaterData %>% distinct(Lagoon) %>% arrange(Lagoon)
+for (i in 1:nrow(Lagoons)){
+  Lagoon = unlist(Lagoons[i,'Lagoon'])
+  cat(Lagoon," exists: ",LagoonExists(connection,Lagoon),"\n")
+}
+
+```
+
+## Sites exist check
+```{r}
+
+WaterData %>% distinct(Location)
+
+
+# Check sites exist
+Sites  = WaterData %>% distinct(Lagoon,Site) %>% arrange(Lagoon,Site)
+for (i in 1:nrow(Sites)){
+  Lagoon = unlist(Sites[i,'Lagoon'])
+  Site = unlist(Sites[i,'Site'])
+  cat(i," ",Lagoon,"-",Site," exists: ",SiteExists(connection,Lagoon,Site),"\n")
+}
+
+```
+
+## Sampling events exist
+```{r}
+# Check sampling events exist
+Events  = WaterData %>% distinct(Lagoon,Site,Date) %>% arrange(Lagoon,Site,Date)
+Events$DateText = as.character(Events$Date)
+cat("begin transaction -- commit rollback\n")
+for (i in 1:nrow(Events)){
+  Lagoon = unlist(Events[i,'Lagoon'])
+  Site = unlist(Events[i,'Site'])
+  Date = unlist(Events[i,'DateText'])
+  Exists = SamplingEventExists(connection,Lagoon,Site,Date)
+  
+  if(Exists==TRUE){
+    cat("-- ",i," ",Lagoon,"-",Site,", ",Date," exists: ",Exists,"\n",sep="")
+  }else{
+    cat("INSERT INTO SamplingEvents(Lagoon,Site,StartDateTime)VALUES('",Lagoon,"','",Site,"','",Date,"'); -- ",i,"\n",sep="")
+  }
+}
+
+```
+
+## Process and write WQ deliverable to file
+
+```{r}
+glimpse(WaterData)
+
+# Check locations
+WaterData %>% distinct(Location,Site) %>% arrange(Location,Site)
+# Problem: Center, Channel are not valid
+# Location
+# <chr>
+# Center				
+# Channel				
+# Inflow				
+# Marine				
+# Marine Edge				
+# Outflow				
+# Random 1				
+# Random 2				
+# Random 3
+#WaterData %>% filter(Location == 'Center' | Location == 'Channel') %>% select(Lagoon,Site,Date) %>% arrange(Lagoon,Site,Date)
+
+WaterData %>% distinct(Site) %>% arrange(Site)
+
+
+WaterData$Site = ifelse(WaterData$Location=='Center' | WaterData$Location == 'Channel',paste(substr(toupper(WaterData$Lagoon),1,3),"_R",sep=""),WaterData$Site)
+
+
+# Write the water quality deliverable 
+WQFile = paste(dir,"L10 ",Year," Lagoons Sampling Discrete Water Quality.xlsx",sep="")
+writexl::write_xlsx(WaterData,WQFile)
+cat(WQFile)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
