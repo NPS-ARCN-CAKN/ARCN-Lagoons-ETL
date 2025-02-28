@@ -15,6 +15,7 @@ These data were received from WCS, Kevin Fraley.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
 # Load libraries
 library(sqldf)
 library(tidyverse)
@@ -747,53 +748,19 @@ x = as.data.frame(left_join(fd,fb,by='CommonNameUpper',multiple='first'))
 ```{r}
 
 
-deliverable = x %>% select(Date
-,Lagoon
-,Site
-,Family
-,Genus
-,`Species.y`
-,CommonName
-,CollectionMethod
-,`Check Number` 
-,CheckTime
-,SetTime_Min
-,Count,CountText,CountFlag
-,ForkLength,ForkLengthText,ForkLengthFlag
-,Lat
-,Long
-,`Species.x`
-,Notes,SiteType)
-
-# deliverable = sqldf("SELECT Date
-# ,Lagoon
-# ,Site
-# ,Family
-# ,Genus
-# ,[Species.y] as Species
-# ,CommonName
-# ,CollectionMethod
-# ,[Check Number] as CheckNumber
-# ,CheckTime
-# ,SetTime_Min
-# ,Count,CountText,CountFlag
-# ,ForkLength as ForkLength_mm,ForkLengthText,ForkLengthFlag as ForkLengthFlag
-# ,Lat as Latitude
-# ,Long as Longitude
-# ,[Species.x] as CommonNameRecorded
-# ,Notes as Comments,SiteType as Site_Recorded
-# FROM x 
-# ORDER BY Date
-# ,Lagoon
-# ,Site,CollectionMethod,CheckNumber")
-
-write.csv(deliverable,paste(dir,"L11 2024 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
+write.csv(deliverable,paste(dir,"L11 2021 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
 
 ```
 
 
 # 2021 Deliverable L10-Discrete water quality data processing
 
+Things to do in Excel
+* Convert weird Excel integer dates to date text values, =TEXT(A2,"YYYY-MM-DD")
+* Fix non-standard Site values. Example =UPPER(LEFT(A17,3))&"_ME" yields AUK_ME for Aukulak Marine Edge
+* Move Site values to SiteRecorded
+* Blankify NAs
+* Anything else that's easier to do in Excel  than R
 
 ## Step 1. Load the worksheet
 
@@ -906,6 +873,134 @@ for(i in 1:nrow(Events)){
 ```{r}
 
 write.csv(wd,paste(dir,"L10 2021 Lagoons Discrete Water Quality Data.csv",sep=""),row.names = FALSE,na="")
+
+```
+
+
+
+
+# 2024 Deliverable L10-Discrete water quality data processing
+
+Things to do in Excel
+* Convert weird Excel integer dates to date text values, =TEXT(A2,"YYYY-MM-DD")
+* Fix non-standard Site values. Example =UPPER(LEFT(A17,3))&"_ME" yields AUK_ME for Aukulak Marine Edge
+* Move Site values to SiteRecorded
+* Blankify NAs
+* Anything else that's easier to do in Excel  than R
+
+
+## Step 1. Load the worksheet
+
+```{r}
+# Get the worksheet names
+#excel_sheets(workbook)
+
+# Load the fish data
+worksheet = "Water Data 2024"
+wd = readxl::read_excel(workbook,worksheet)
+# Use these tools to check that data types match expected attributes, statistics such as min/max, etc. are as expected
+wd$Date = as.Date(wd$Date)
+
+# glimpse(wd)
+
+# summary(wd)
+
+```
+
+## Step 2. Data quality checks
+
+```{r}
+
+# Generate dplyr distinct values statements
+for(ColumnName in colnames(wd)){
+  cat("wd %>% distinct(`",ColumnName,"`) %>% arrange(`",ColumnName,"`)\n",sep="")
+}
+
+```
+
+```{r}
+
+wd %>% distinct(`Lagoon`) %>% arrange(`Lagoon`)
+wd %>% distinct(`Date`) %>% arrange(`Date`)
+wd %>% distinct(`Site`) %>% arrange(`Site`)
+wd %>% distinct(`SiteType`) %>% arrange(`SiteType`)
+wd %>% distinct(`SiteRecorded`) %>% arrange(`SiteRecorded`)
+wd %>% distinct(`TEMP (Celsius)`) %>% arrange(`TEMP (Celsius)`)
+wd %>% distinct(`SPC (µS/cm)`) %>% arrange(`SPC (µS/cm)`)
+wd %>% distinct(`Salinity (ppt)`) %>% arrange(`Salinity (ppt)`)
+wd %>% distinct(`ODO%`) %>% arrange(`ODO%`)
+wd %>% distinct(`ODO mg/L`) %>% arrange(`ODO mg/L`)
+wd %>% distinct(`pH`) %>% arrange(`pH`)
+wd %>% distinct(`Chlorophyl RFU`) %>% arrange(`Chlorophyl RFU`)
+wd %>% distinct(`BGA RFU`) %>% arrange(`BGA RFU`)
+wd %>% distinct(`Turbidity (FNU)`) %>% arrange(`Turbidity (FNU)`)
+wd %>% distinct(`NOTES`) %>% arrange(`NOTES`)
+wd %>% distinct(`ExcelDate`) %>% arrange(`ExcelDate`)
+
+```
+### 2024 Lagoons existence check
+
+```{r}
+# fix lagoon names
+# wd$Lagoon = ifelse(wd$Lagoon=='Aniqaaq','Anigaaq',wd$Lagoon)
+# wd$Lagoon = ifelse(wd$Lagoon=='Aukulaaq','Aukulak',wd$Lagoon)
+
+
+# make sure lagoons exist
+Lagoons = as.data.frame(wd %>% distinct(Lagoon))
+
+# Rabbit Creek is not a lagoon
+for(i in 1:nrow(Lagoons)){
+  Lagoon = Lagoons[i,1]
+  cat(LagoonExists(connection,Lagoon))
+  #cat("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon," ",Exists,"\n",sep="")
+}
+
+```
+
+### 2024 Sites existence check
+
+```{r}
+wd$Lat = NA
+wd$Long = NA
+# Check sites exist, if not get insert queries
+Sites = wd %>% distinct(Lagoon,Site,Lat,Long)
+Sites
+cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
+for(i in 1:nrow(Sites)){
+  Lagoon = Sites[i,'Lagoon']
+  Site = Sites[i,'Site']
+  Lat = Sites[i,'Lat']
+  Lon = Sites[i,'Long']
+  cat(SiteExists(connection,Lagoon,Site,Lat,Lon)," -- ",i,"\n",sep="")
+}
+
+```
+
+
+
+### 2024 Sampling Events existence check
+
+```{r}
+Events = wd %>% distinct(Lagoon,Date,Site) %>% arrange(Site)
+Events$RealDate = as.character(Events$Date)
+
+cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
+cat("-- ",nrow(Events)," rows\n")
+for(i in 1:nrow(Events)){
+  Lagoon = Events[i,'Lagoon']
+  Site = Events[i,'Site']
+  Date = Events[i,'RealDate']
+  cat(SamplingEventExists(connection,Lagoon,Date,Site),"-- ",i,"\n")
+}
+
+```
+
+## Step 5. Write the water quality deliverable
+
+```{r}
+
+write.csv(wd,paste(dir,"L10 2024 Lagoons Discrete Water Quality Data.csv",sep=""),row.names = FALSE,na="")
 
 ```
 
