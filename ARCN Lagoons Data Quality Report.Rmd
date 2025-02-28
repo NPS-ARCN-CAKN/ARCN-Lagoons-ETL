@@ -1,0 +1,64 @@
+---
+title: "ARCN Lagoons Data Quality Report"
+author: "SDMiller"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Intro
+
+Data quality report
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Load libraries
+library(sqldf)
+library(tidyverse)
+library(readxl)
+library(odbc)
+# library(leaflet)
+
+connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna_dev", Database = "ARCN_Lagoons")
+dir = r'(O:\Monitoring\Vital Signs\Lagoon Communities and Ecosystems\)'
+
+```
+
+# Temperature
+
+```{r,echo=FALSE,results='asis'}
+# Get the temperature data by Lagoon, SiteType and Date
+Sql = "SELECT * FROM Summary_WaterQualityDiscrete_TemperatureByLagoonSiteTypeDate"
+Temp = dbGetQuery(connection,Sql)
+Temp$Month=month(Temp$Date)
+
+# Plot Temperature
+GetLagoonTemperaturePlotBySite = function(LagoonName){
+  ggplot(Temp %>% filter(!SiteType=='Non-standard' & Lagoon==LagoonName)) + 
+    geom_col(aes(x=Date,y=Mean,fill=Month)) +
+    geom_errorbar(aes(x=Date,ymin = Minimum,ymax = Maximum)) +  
+    geom_hline(yintercept=0,color='lightgray') +
+    ggtitle(paste('Temperature (C) in ',LagoonName," Lagoon By Site Type",sep="")) +
+    facet_grid(vars(SiteType)) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+}
+GetLagoonTemperaturePlotBySite('Aukulak')
+
+
+```
+
+```{r,echo=FALSE}
+# Plot it
+LagoonName='Aukulak'
+ggplot(Temp %>% filter(!SiteType=='Non-standard' & Lagoon==LagoonName)) + 
+  #geom_point(aes(x=Date,y=Mean,color=Month)) +
+  geom_col(aes(x=Date,y=Mean,fill=Month)) +
+  geom_hline(yintercept=0,color='lightgray') +
+  ggtitle(paste('Temperature (C) in ',LagoonName," Lagoon",sep="")) +
+  #facet_grid(vars(Lagoon),vars(SiteType)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
