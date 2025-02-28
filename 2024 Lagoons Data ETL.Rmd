@@ -107,7 +107,7 @@ SamplingEventExists = function(DatabaseConnection, Lagoon,Date,Site) {
     
     # Return true or false depending on whether we get a row or not
     if (nrow(result) == 0) {
-        return(paste("INSERT INTO SamplingEvents(Lagoon,Site,Date)VALUES('",Lagoon,"','",Site,"','",Date,"'",sep=""))
+        return(paste("INSERT INTO SamplingEvents(Lagoon,Site,Date)VALUES('",Lagoon,"','",Site,"','",Date,"')",sep=""))
     } else {
       return(paste(Sql," -- Exists\n",sep=""))
     }
@@ -122,11 +122,25 @@ SamplingEventExists = function(DatabaseConnection, Lagoon,Date,Site) {
 # cat(SamplingEventExists(connection,'Anigaaq','2024-06-23','ANI_ME'))
 # cat(SamplingEventExists(connection,'Aukulak','2024-06-19','AUK_OUT'))
 
+# Summarizes the parameters of a data frame
+GetDataFrameSummary = function(DataFrame){
+    # Calculate min, max, and mean for numeric columns
+  numeric_summary <- DataFrame %>%  summarise(across(where(is.numeric), list(Min = ~min(., na.rm = TRUE),Max = ~max(., na.rm = TRUE),Mean = ~mean(., na.rm = TRUE))))
+  
+  # Reshape the summary statistics to have parameters as rows and stats as columns
+  numeric_summary_long <- pivot_longer(numeric_summary, everything(), names_to = c("Parameter", ".value"), names_sep = "_")
+}
+
 ```
 
 # 2021 Deliverable L11-Fish data processing
 
 This section contains processing steps to get the fish data (Deliverable L11) processed for ingestion into the master lagoons monitoring database.
+
+Preprocessing in Excel
+* Site names standardization
+* NA removal
+* Fix Excel dates
 
 ## Step 1. Load the worksheet
 
@@ -145,19 +159,39 @@ fd = readxl::read_excel(workbook,worksheet)
 ```{r}
 
 # Use these tools to check that data types match expected attributes, statistics such as min/max, etc. are as expected
-glimpse(fd)
+fd$Date = as.Date(fd$Date)
 
-# fd %>% distinct(Year)
-# fd %>% distinct(Date)
-# fd %>% distinct(Lagoon)
-# fd %>% distinct(Site)
-# fd %>% distinct(`Gear Type`)
-# fd %>% distinct(`Set Time (hours)`)
-# fd %>% distinct(`Check Number`)
-# fd %>% distinct(`Check Time`)
-# fd %>% distinct(Species)
-# fd %>% distinct(Year)
-# fd %>% distinct(`Fork Length (mm)`) %>% arrange(`Fork Length (mm)`)
+glimpse(fd)
+Summary = GetDataFrameSummary(fd)
+knitr::kable(Summary)
+
+
+# Generate dplyr distinct values statements
+for(ColumnName in colnames(fd)){
+  cat("fd %>% distinct(",ColumnName,") %>% arrange(",ColumnName,")\n",sep="")
+}
+
+fd$SetTime_Min = fd$`Set Time (hours)`*60
+
+# Look at distinct values
+fd %>% distinct(Year) %>% arrange(Year)
+fd %>% distinct(Date) %>% arrange(Date)
+fd %>% distinct(Lagoon) %>% arrange(Lagoon)
+fd %>% distinct(Site) %>% arrange(Site)
+fd %>% distinct(SiteType) %>% arrange(SiteType)
+fd %>% distinct(SiteRecorded) %>% arrange(SiteRecorded)
+fd %>% distinct(GearType) %>% arrange(GearType)
+fd %>% distinct(`Set Time (hours)`) %>% arrange(`Set Time (hours)`)
+fd %>% distinct(`Check Number`) %>% arrange(`Check Number`)
+fd %>% distinct(`Check Time`) %>% arrange(`Check Time`)
+fd %>% distinct(CommonName) %>% arrange(CommonName)
+fd %>% distinct(Count) %>% arrange(Count)
+fd %>% distinct(ForkLength) %>% arrange(ForkLength)
+fd %>% distinct(ForkLengthText) %>% arrange(ForkLengthText)
+fd %>% distinct(Notes) %>% arrange(Notes)
+fd %>% distinct(Lat) %>% arrange(Lat)
+fd %>% distinct(Long) %>% arrange(Long)
+fd %>% distinct(ExcelDate) %>% arrange(ExcelDate)
 
 
 
@@ -169,15 +203,17 @@ glimpse(fd)
 
 ```{r}
 # fix lagoon names
-fd$Lagoon = ifelse(fd$Lagoon=='Aniqaaq','Anigaaq',fd$Lagoon)
-fd$Lagoon = ifelse(fd$Lagoon=='Aukulaaq','Aukulak',fd$Lagoon)
+# fd$Lagoon = ifelse(fd$Lagoon=='Aniqaaq','Anigaaq',fd$Lagoon)
+# fd$Lagoon = ifelse(fd$Lagoon=='Aukulaaq','Aukulak',fd$Lagoon)
 
 # offload non-existent lagoons
-fd = fd %>% filter(Lagoon != 'Rabbit Creek' & Lagoon != 'Situkuyok')
-# i don't know where rabbit creek or Situkuyok is, no spatial data
 # write to a file and filter out of the dataset
-#write.csv(fd %>% filter(Lagoon == 'Rabbit Creek'),paste(dir,"L11 Rabbit Creek Fish Data.csv",sep=""))
-#write.csv(fd %>% filter(Lagoon == 'Situkuyok'),paste(dir,"L11 Situkuyok Fish Data.csv",sep=""))
+# write.csv(fd %>% filter(Lagoon == 'Rabbit Creek'),paste(dir,"L11 2021 Rabbit Creek Fish Data.csv",sep=""))
+# write.csv(fd %>% filter(Lagoon == 'Situkuyok'),paste(dir,"L11 2021 Situkuyok Fish Data.csv",sep=""))
+# 
+# fd = fd %>% filter(Lagoon != 'Rabbit Creek' & Lagoon != 'Situkuyok')
+# i don't know where rabbit creek or Situkuyok is, no spatial data
+
 
 ```
 
@@ -209,7 +245,7 @@ for(i in 1:nrow(Lagoons)){
 
 # Fix Site names
 # in order to fix Site we need to move it's current data into SiteType
-fd$SiteType = fd$Site
+#fd$SiteType = fd$Site
 
 # glimpse(fd)
 
@@ -217,13 +253,13 @@ fd$SiteType = fd$Site
 # fd %>% distinct(Site,SiteType) %>% arrange(Site)
 
 # Create site names
-fd$Site = paste(toupper(substr(fd$Lagoon,1,3)),"_",toupper(substr(fd$SiteType,1,3)), sep="")
+#fd$Site = paste(toupper(substr(fd$Lagoon,1,3)),"_",toupper(substr(fd$SiteType,1,3)), sep="")
 
 # go back and fix items
-fd$Site = ifelse(fd$SiteType=='Inflow',paste(toupper(substr(fd$Lagoon,1,3)),"_IN", sep=""),fd$Site)
-fd$Site = ifelse(fd$SiteType=='Marine Edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
-fd$Site = ifelse(fd$SiteType=='Marine',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
-fd$Site = ifelse(fd$SiteType=='Marine edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
+#fd$Site = ifelse(fd$SiteType=='Inflow',paste(toupper(substr(fd$Lagoon,1,3)),"_IN", sep=""),fd$Site)
+#fd$Site = ifelse(fd$SiteType=='Marine Edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
+#fd$Site = ifelse(fd$SiteType=='Marine',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
+#fd$Site = ifelse(fd$SiteType=='Marine edge',paste(toupper(substr(fd$Lagoon,1,3)),"_ME", sep=""),fd$Site)
 
 ```
 
@@ -250,21 +286,23 @@ for(i in 1:nrow(Sites)){
 ```{r}
 # Fix Sites
 Events = fd %>% distinct(Lagoon,Date,Site) %>% arrange(Site)
-Events$RealDate = as.character(Events$Date)
+# Events$RealDate = as.character(Events$Date)
 
 ```
 
-### 2024 Sampling Events existence check
+### 2021 Sampling Events existence check
 
 ```{r}
-
+Events = fd %>% distinct(Lagoon,Date,Site) %>% arrange(Site)
+Events$DateChar = as.character(Events$Date)
 cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
 cat("-- ",nrow(Events)," rows\n")
+
 for(i in 1:nrow(Events)){
   Lagoon = Events[i,'Lagoon']
   Site = Events[i,'Site']
-  Date = Events[i,'RealDate']
-  cat(SamplingEventExists(connection,Lagoon,Date,Site),"-- ",i,"\n")
+  Date = as.character(Events[i, 'DateChar'])
+  cat(SamplingEventExists(connection,Lagoon,Date,Site),"\n",sep="")
 }
 
 ```
@@ -391,24 +429,23 @@ x = as.data.frame(left_join(fd,fb,by='CommonNameUpper',multiple='first'))
 ## Step 5. Write the fish deliverable
 
 ```{r}
-
+glimpse(x)
 
 deliverable = x %>% select(Date
 ,Lagoon
 ,Site
 ,Family
 ,Genus
-,`Species.y`
+,`Species`
 ,CommonName
-,CollectionMethod
+,GearType
 ,`Check Number` 
-,CheckTime
+,`Check Time`
 ,SetTime_Min
-,Count,CountText,CountFlag
-,ForkLength,ForkLengthText,ForkLengthFlag
+,Count
+,ForkLength
 ,Lat
 ,Long
-,`Species.x`
 ,Notes,SiteType)
 
 # deliverable = sqldf("SELECT Date
@@ -433,7 +470,7 @@ deliverable = x %>% select(Date
 # ,Lagoon
 # ,Site,CollectionMethod,CheckNumber")
 
-write.csv(deliverable,paste(dir,"L11 2024 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
+write.csv(deliverable,paste(dir,"L11 2021 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
 
 ```
 
@@ -753,6 +790,201 @@ deliverable = x %>% select(Date
 write.csv(deliverable,paste(dir,"L11 2024 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
 
 ```
+
+
+# 2021 Deliverable L10-Discrete water quality data processing
+
+
+## Step 1. Load the worksheet
+
+```{r}
+# Get the worksheet names
+#excel_sheets(workbook)
+
+# Load the fish data
+worksheet = "Water Data 2021"
+wd = readxl::read_excel(workbook,worksheet)
+
+```
+
+## Step 2. Data quality checks
+
+```{r}
+
+# Use these tools to check that data types match expected attributes, statistics such as min/max, etc. are as expected
+glimpse(wd)
+
+# Use these tools to check that data types match expected attributes, statistics such as min/max, etc. are as expected
+wd$Date = as.Date(wd$Date)
+
+# Generate dplyr distinct values statements
+for(ColumnName in colnames(wd)){
+  cat("wd %>% distinct(`",ColumnName,"`) %>% arrange(`",ColumnName,"`)\n",sep="")
+}
+
+wd %>% distinct(`Lagoon`) %>% arrange(`Lagoon`)
+wd %>% distinct(`Date`) %>% arrange(`Date`)
+wd %>% distinct(`Site`) %>% arrange(`Site`)
+wd %>% distinct(`SiteType`) %>% arrange(`SiteType`)
+wd %>% distinct(`Temp_C`) %>% arrange(`Temp_C`)
+wd %>% distinct(`Conductivity (µS/cm)`) %>% arrange(`Conductivity (µS/cm)`)
+wd %>% distinct(`Salinity (ppt)`) %>% arrange(`Salinity (ppt)`)
+wd %>% distinct(`ODO%`) %>% arrange(`ODO%`)
+wd %>% distinct(`ODO mg/L`) %>% arrange(`ODO mg/L`)
+wd %>% distinct(`pH`) %>% arrange(`pH`)
+wd %>% distinct(`Chlorophyl_RFU`) %>% arrange(`Chlorophyl_RFU`)
+wd %>% distinct(`BGA RFU`) %>% arrange(`BGA RFU`)
+wd %>% distinct(`Turbidity (FNU)`) %>% arrange(`Turbidity (FNU)`)
+wd %>% distinct(`NOTES`) %>% arrange(`NOTES`)
+wd %>% distinct(`ExcelDate`) %>% arrange(`ExcelDate`)
+
+```
+
+## Step 3. Fix defects, 2024
+
+### 2024 Lagoons existence check
+
+```{r}
+# fix lagoon names
+# wd$Lagoon = ifelse(wd$Lagoon=='Aniqaaq','Anigaaq',wd$Lagoon)
+# wd$Lagoon = ifelse(wd$Lagoon=='Aukulaaq','Aukulak',wd$Lagoon)
+
+
+# make sure lagoons exist
+Lagoons = as.data.frame(wd %>% distinct(Lagoon))
+
+# Rabbit Creek is not a lagoon
+for(i in 1:nrow(Lagoons)){
+  Lagoon = Lagoons[i,1]
+  cat(LagoonExists(connection,Lagoon))
+  #cat("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon," ",Exists,"\n",sep="")
+}
+
+# ValidLagoonNames = dbGetQuery(connection,"SELECT DISTINCT Lagoon FROM Lagoons ORDER BY Lagoon")
+
+
+
+```
+
+### Fix Sites
+
+```{r}
+
+
+# Fix Site names
+# in order to fix Site we need to move it's current data into SiteType
+#wd$SiteType = wd$Site
+
+# glimpse(wd)
+
+# Distinct sites
+# wd %>% distinct(Site,SiteType) %>% arrange(Site)
+
+# Create site names
+#wd$Site = paste(toupper(substr(wd$Lagoon,1,3)),"_",toupper(substr(wd$SiteType,1,3)), sep="")
+
+# go back and fix items
+# wd$Site = ifelse(wd$SiteType=='Inflow',paste(toupper(substr(wd$Lagoon,1,3)),"_IN", sep=""),wd$Site)
+# wd$Site = ifelse(wd$SiteType=='Marine Edge',paste(toupper(substr(wd$Lagoon,1,3)),"_ME", sep=""),wd$Site)
+# wd$Site = ifelse(wd$SiteType=='Marine edge',paste(toupper(substr(wd$Lagoon,1,3)),"_ME", sep=""),wd$Site)
+# wd$Site = ifelse(wd$SiteType=='Inlet Side',paste(toupper(substr(wd$Lagoon,1,3)),"_NS", sep=""),wd$Site)
+# wd$Lagoon = ifelse(wd$SiteType=='River beaver lodge',"Aukulaaq",wd$Lagoon)
+# wd$Site = ifelse(wd$SiteType=='River beaver lodge',paste(toupper(substr(wd$Lagoon,1,3)),"_NS", sep=""),wd$Site)
+
+# wd %>% distinct(Site)
+
+# What is River beaver lodge?
+#wd %>% filter(SiteType=='River beaver lodge')
+
+```
+
+### 2024 Sites existence check
+
+```{r}
+wd$Lat = NA
+wd$Long = NA
+# Check sites exist, if not get insert queries
+Sites = wd %>% distinct(Lagoon,Site,Lat,Long)
+Sites
+cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
+for(i in 1:nrow(Sites)){
+  Lagoon = Sites[i,'Lagoon']
+  Site = Sites[i,'Site']
+  Lat = Sites[i,'Lat']
+  Lon = Sites[i,'Long']
+  cat(SiteExists(connection,Lagoon,Site,Lat,Lon)," -- ",i,"\n",sep="")
+}
+
+```
+
+
+
+### 2024 Sampling Events existence check
+
+```{r}
+Events = wd %>% distinct(Lagoon,Date,Site) %>% arrange(Site)
+Events$RealDate = as.character(Events$Date)
+
+cat("BEGIN TRANSACTION -- COMMIT ROLLBACK\n")
+cat("-- ",nrow(Events)," rows\n")
+for(i in 1:nrow(Events)){
+  Lagoon = Events[i,'Lagoon']
+  Site = Events[i,'Site']
+  Date = Events[i,'RealDate']
+  cat(SamplingEventExists(connection,Lagoon,Date,Site),"-- ",i,"\n")
+}
+
+```
+
+## Step 5. Write the water quality deliverable
+
+```{r}
+
+
+deliverable = x %>% select(Date
+,Lagoon
+,Site
+,Family
+,Genus
+,`Species.y`
+,CommonName
+,CollectionMethod
+,`Check Number` 
+,CheckTime
+,SetTime_Min
+,Count,CountText,CountFlag
+,ForkLength,ForkLengthText,ForkLengthFlag
+,Lat
+,Long
+,`Species.x`
+,Notes,SiteType)
+
+# deliverable = sqldf("SELECT Date
+# ,Lagoon
+# ,Site
+# ,Family
+# ,Genus
+# ,[Species.y] as Species
+# ,CommonName
+# ,CollectionMethod
+# ,[Check Number] as CheckNumber
+# ,CheckTime
+# ,SetTime_Min
+# ,Count,CountText,CountFlag
+# ,ForkLength as ForkLength_mm,ForkLengthText,ForkLengthFlag as ForkLengthFlag
+# ,Lat as Latitude
+# ,Long as Longitude
+# ,[Species.x] as CommonNameRecorded
+# ,Notes as Comments,SiteType as Site_Recorded
+# FROM x 
+# ORDER BY Date
+# ,Lagoon
+# ,Site,CollectionMethod,CheckNumber")
+
+write.csv(deliverable,paste(dir,"L11 2024 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
+
+```
+
 
 
 
