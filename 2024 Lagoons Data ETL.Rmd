@@ -822,6 +822,10 @@ for(ColumnName in colnames(wd)){
   cat("wd %>% distinct(`",ColumnName,"`) %>% arrange(`",ColumnName,"`)\n",sep="")
 }
 
+```
+
+```{r}
+
 wd %>% distinct(`Lagoon`) %>% arrange(`Lagoon`)
 wd %>% distinct(`Date`) %>% arrange(`Date`)
 wd %>% distinct(`Site`) %>% arrange(`Site`)
@@ -839,9 +843,6 @@ wd %>% distinct(`NOTES`) %>% arrange(`NOTES`)
 wd %>% distinct(`ExcelDate`) %>% arrange(`ExcelDate`)
 
 ```
-
-## Step 3. Fix defects, 2024
-
 ### 2024 Lagoons existence check
 
 ```{r}
@@ -859,42 +860,6 @@ for(i in 1:nrow(Lagoons)){
   cat(LagoonExists(connection,Lagoon))
   #cat("INSERT INTO Lagoons(Lagoon)VALUES('",Lagoon,"') -- ",Lagoon," ",Exists,"\n",sep="")
 }
-
-# ValidLagoonNames = dbGetQuery(connection,"SELECT DISTINCT Lagoon FROM Lagoons ORDER BY Lagoon")
-
-
-
-```
-
-### Fix Sites
-
-```{r}
-
-
-# Fix Site names
-# in order to fix Site we need to move it's current data into SiteType
-#wd$SiteType = wd$Site
-
-# glimpse(wd)
-
-# Distinct sites
-# wd %>% distinct(Site,SiteType) %>% arrange(Site)
-
-# Create site names
-#wd$Site = paste(toupper(substr(wd$Lagoon,1,3)),"_",toupper(substr(wd$SiteType,1,3)), sep="")
-
-# go back and fix items
-# wd$Site = ifelse(wd$SiteType=='Inflow',paste(toupper(substr(wd$Lagoon,1,3)),"_IN", sep=""),wd$Site)
-# wd$Site = ifelse(wd$SiteType=='Marine Edge',paste(toupper(substr(wd$Lagoon,1,3)),"_ME", sep=""),wd$Site)
-# wd$Site = ifelse(wd$SiteType=='Marine edge',paste(toupper(substr(wd$Lagoon,1,3)),"_ME", sep=""),wd$Site)
-# wd$Site = ifelse(wd$SiteType=='Inlet Side',paste(toupper(substr(wd$Lagoon,1,3)),"_NS", sep=""),wd$Site)
-# wd$Lagoon = ifelse(wd$SiteType=='River beaver lodge',"Aukulaaq",wd$Lagoon)
-# wd$Site = ifelse(wd$SiteType=='River beaver lodge',paste(toupper(substr(wd$Lagoon,1,3)),"_NS", sep=""),wd$Site)
-
-# wd %>% distinct(Site)
-
-# What is River beaver lodge?
-#wd %>% filter(SiteType=='River beaver lodge')
 
 ```
 
@@ -940,48 +905,7 @@ for(i in 1:nrow(Events)){
 
 ```{r}
 
-
-deliverable = x %>% select(Date
-,Lagoon
-,Site
-,Family
-,Genus
-,`Species.y`
-,CommonName
-,CollectionMethod
-,`Check Number` 
-,CheckTime
-,SetTime_Min
-,Count,CountText,CountFlag
-,ForkLength,ForkLengthText,ForkLengthFlag
-,Lat
-,Long
-,`Species.x`
-,Notes,SiteType)
-
-# deliverable = sqldf("SELECT Date
-# ,Lagoon
-# ,Site
-# ,Family
-# ,Genus
-# ,[Species.y] as Species
-# ,CommonName
-# ,CollectionMethod
-# ,[Check Number] as CheckNumber
-# ,CheckTime
-# ,SetTime_Min
-# ,Count,CountText,CountFlag
-# ,ForkLength as ForkLength_mm,ForkLengthText,ForkLengthFlag as ForkLengthFlag
-# ,Lat as Latitude
-# ,Long as Longitude
-# ,[Species.x] as CommonNameRecorded
-# ,Notes as Comments,SiteType as Site_Recorded
-# FROM x 
-# ORDER BY Date
-# ,Lagoon
-# ,Site,CollectionMethod,CheckNumber")
-
-write.csv(deliverable,paste(dir,"L11 2024 Lagoons Fish Data.csv",sep=""),row.names = FALSE,na="")
+write.csv(wd,paste(dir,"L10 2021 Lagoons Discrete Water Quality Data.csv",sep=""),row.names = FALSE,na="")
 
 ```
 
