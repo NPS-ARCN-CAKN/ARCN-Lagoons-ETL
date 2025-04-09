@@ -2,7 +2,11 @@
 title: "ARCN Lagoons Data Quality Report"
 author: "SDMiller"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
 ---
 
 # Intro
@@ -17,48 +21,213 @@ library(sqldf)
 library(tidyverse)
 library(readxl)
 library(odbc)
-# library(leaflet)
+library(leaflet)
 
+# Database connection
 connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna_dev", Database = "ARCN_Lagoons")
-dir = r'(O:\Monitoring\Vital Signs\Lagoon Communities and Ecosystems\)'
+
+# Table and figure counters
+TableCounter = 1
+FigureCounter = 1
 
 ```
 
-# Temperature
+```{r,label="WaterQualityDiscrete data retrieval"}
+# Get the discrete water quality data
+Sql = "SELECT * FROM WaterQualityDiscrete"
+wqd = dbGetQuery(connection,Sql)
+```
+
+```{r,label='Functions'}
+
+# Returns a data frame of summary statistics for the discrete water quality parameter Parameter for Lagoon
+# LagoonName: The name of a lagoon from the Lagoons database table
+# Parameter from the WaterQualityDiscrete database table.
+# Returns: Tibble
+GetWaterQualityDiscreteParameterSummaryForALagoon = function(LagoonName,Parameter){
+    # Build a summary of basic statistics for the lagoon and parameter
+    Summary = wqd %>% filter(Lagoon==LagoonName & is.na(!!sym(Parameter))==FALSE) %>% group_by(Lagoon,Date) %>% summarize(
+    Mean = mean(!!sym(Parameter),na.rm=TRUE)
+    ,Min = min(!!sym(Parameter),na.rm=TRUE)
+    ,Max = max(!!sym(Parameter),na.rm=TRUE)
+    ,SD = sd(!!sym(Parameter),na.rm=TRUE)
+    ,n = n()
+    ,.groups='keep'
+  ) %>% arrange(Date)
+  return(Summary)
+}
+#Test
+# GetWaterQualityDiscreteParameterSummaryForALagoon('Kotlik','Conductivity (uS/cm)')
+# GetWaterQualityDiscreteParameterSummaryForALagoon('Krusenstern','Conductivity (uS/cm)')
+
+PlotWaterQualityDiscreteParameterSummaryForALagoon = function(LagoonName,Parameter,FigureNumber){
+  # Get a table of basic statistics for the lagoon and parameter
+  Summary = GetWaterQualityDiscreteParameterSummaryForALagoon(LagoonName,Parameter) 
+  
+  # Plot the parameter
+  Plot = ggplot(Summary) +
+    geom_ribbon(aes(x=Date,ymin=Min,ymax=Max,group=1),fill='gray',alpha=0.5) +
+    geom_errorbar(aes(x=Date,ymin=Mean-SD,ymax=Mean+SD,group=1),width=0.3) +
+    geom_path(aes(x=Date,y=Mean,group = 1),na.rm=TRUE) +
+    geom_point(aes(x=Date,y=Mean),fill='black',na.rm=TRUE) +
+    labs(
+      title=paste(Parameter," in ",LagoonName," lagoon",sep=""),
+      caption=paste("Figure ",FigureNumber,". ",Parameter," in ",LagoonName," lagoon. Error bars indicate standard deviation. Gray band shows minimum and maximum daily values.",sep="")
+      ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+  
+  return(Plot)
+}
+# Test
+PlotWaterQualityDiscreteParameterSummaryForALagoon('Kotlik','Salinity (ppt)',3)
+# PlotWaterQualityDiscreteParameterSummaryForALagoon('Krusenstern','Conductivity (uS/cm)')
+# PlotWaterQualityDiscreteParameterSummaryForALagoon('Kotlik','Salinity (ppt)')
+
+```
+
+
+# Discrete Water Quality Sampling Results
+
+```{r,results='asis',echo=FALSE,warning=FALSE}
+for(Lagoon in wqd %>% distinct(Lagoon) %>% arrange(Lagoon) %>% pull(Lagoon)){
+  LagoonName = Lagoon
+  
+  # Print the lagoon name as markdown
+  cat("## ",as.character(LagoonName)," \n\n",sep="")
+  
+  # Print the summary table caption 
+  cat("Table ",TableCounter,".   \n\n",sep="")
+  
+  # Make a list of discrete water quality parameters to describe
+  Parameters = c("Conductivity (uS/cm)","Salinity (ppt)" ,"Salinity (PSU)","Dissolved Oxygen (% sat)","Dissolved Oxygen (mg/l)","pH","Turbidity (FNU)","Turbidity (NTU)","Turbidity (mg/L)","Chlorophyll (ug/L)")
+  
+  # Loop through the parameters and output results as markdown, one by one
+  for(Parameter in Parameters){
+    
+    # Parameter name
+    cat("### ",Parameter," \n\n",sep="")
+    
+    # Plot the parameter
+    print(PlotWaterQualityDiscreteParameterSummaryForALagoon(LagoonName,Parameter,FigureCounter))
+    cat("  \n\n",sep="")
+    
+    # Give a summary table
+    cat("Table ",TableCounter,". Summary of ",Parameter," in ",LagoonName," lagoon. \n\n",sep="")
+    print(knitr::kable(GetWaterQualityDiscreteParameterSummaryForALagoon(LagoonName,Parameter)))
+    
+    # Increment the table and figure counters
+    TableCounter = TableCounter + 1
+    FigureCounter = FigureCounter + 1
+  }
+  
+}
+
+```
+
+
 
 ```{r,echo=FALSE,results='asis'}
 # Get the temperature data by Lagoon, SiteType and Date
-Sql = "SELECT * FROM Summary_WaterQualityDiscrete_TemperatureByLagoonSiteTypeDate"
-Temp = dbGetQuery(connection,Sql)
-Temp$Month=month(Temp$Date)
+# Sql = "SELECT * FROM [Summary_WaterQualityDiscrete_TemperatureByLagoonSiteTypeYearMonth]"
+# Temp = dbGetQuery(connection,Sql)
+# Temp$YM=paste(Temp$Year,"-",Temp$Month,sep="")
+# 
+# # Plot Temperature
+# GetLagoonTemperaturePlotBySite = function(LagoonName){
+#   ggplot(Temp %>% filter(Lagoon==LagoonName)) + 
+#     geom_col(aes(x=YM,y=Mean,fill=Month)) +
+#     geom_text(aes(x=YM,y=Mean,label=paste(round(Mean,digits=1)," (n=",n,")"))) +
+#     geom_errorbar(aes(x=YM,ymin = Minimum,ymax = Maximum)) +  
+#     ggtitle(paste('Temperature (C) in ',LagoonName," Lagoon By Site Type and Month",sep="")) +
+#     facet_grid(vars(SiteType)) +
+#     theme_minimal() +
+#     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# }
+# #GetLagoonTemperaturePlotBySite('Krusenstern')
+# # GetLagoonTemperaturePlotBySite('Aukulak')
+# 
+# Lagoons = Temp %>% distinct(Lagoon) %>% arrange(Lagoon)
+# for(i in 1:nrow(Lagoons)){
+#   Lagoon = Lagoons[i,'Lagoon']
+#   cat("## ",Lagoon,"\n\n",sep="")
+#   print(GetLagoonTemperaturePlotBySite(Lagoon))
+#   cat("\n\n",sep="")
+# }
 
-# Plot Temperature
-GetLagoonTemperaturePlotBySite = function(LagoonName){
-  ggplot(Temp %>% filter(!SiteType=='Non-standard' & Lagoon==LagoonName)) + 
-    geom_col(aes(x=Date,y=Mean,fill=Month)) +
-    geom_errorbar(aes(x=Date,ymin = Minimum,ymax = Maximum)) +  
-    geom_hline(yintercept=0,color='lightgray') +
-    ggtitle(paste('Temperature (C) in ',LagoonName," Lagoon By Site Type",sep="")) +
-    facet_grid(vars(SiteType)) +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
-}
-GetLagoonTemperaturePlotBySite('Aukulak')
 
+```
 
+# Continuous Water Quality Sampling Results
+
+```{r,echo=FALSE}
+# Get the continuous water quality data
+Sql = "SELECT * FROM WaterQualityContinuous"
+wqc = dbGetQuery(connection,Sql)
+wqc$Date = as.Date(wqc$DateTime)
+#  glimpse(wqc)
+
+# Summarize the data by lagoon and date
+Summary_Temperature = wqc %>% group_by(Lagoon,Date) %>% summarize(
+    `Temperature (mean)`=mean(`Temperature (C)`, na.rm = TRUE)
+    ,Min=min(`Temperature (C)`, na.rm = TRUE)
+    ,Max=max(`Temperature (C)`, na.rm = TRUE)
+    ,`S.D.`=sd(`Temperature (C)`, na.rm = TRUE)
+    ,n=n()
+  )
 ```
 
 ```{r,echo=FALSE}
-# Plot it
-LagoonName='Aukulak'
-ggplot(Temp %>% filter(!SiteType=='Non-standard' & Lagoon==LagoonName)) + 
-  #geom_point(aes(x=Date,y=Mean,color=Month)) +
-  geom_col(aes(x=Date,y=Mean,fill=Month)) +
-  geom_hline(yintercept=0,color='lightgray') +
-  ggtitle(paste('Temperature (C) in ',LagoonName," Lagoon",sep="")) +
-  #facet_grid(vars(Lagoon),vars(SiteType)) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+# colnames(wqc)
+
+
+ggplot(Summary_Temperature) +
+  #geom_point(aes(x = Date, y = `Temperature (C)`)) +
+  geom_line(aes(x=Date,y=`Temperature (mean)`)) +
+  geom_ribbon(aes(x=Date,ymin=Min,ymax=Max),fill='steelblue',alpha=0.5) +
+  facet_grid(vars(Lagoon)) +
+  scale_x_date(date_labels = "%Y-%m", date_breaks = "1 month") +  # Format for Year-Month
+  theme_minimal()
+
 
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
