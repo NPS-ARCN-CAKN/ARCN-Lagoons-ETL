@@ -1,5 +1,5 @@
 ---
-title: "ARCN Lagoons Data Quality Report"
+title: "ARCN Data Series Report: Coastal Lagoons Monitoring in Bering Land Bridge National Preserve and Cape Krusenstern National Monument"
 author: "SDMiller"
 date: "`r Sys.Date()`"
 output:
@@ -9,9 +9,13 @@ output:
     toc_float: true
 ---
 
-# Intro
+# Introduction
 
-Data quality report
+The National Park Service (NPS) has monitored the ecology of the coast lagoons in Bering Land Bridge National Preserve and Cape Krusenstern National Monument since 2003 as part of the Arctic Inventory and Monitoring Network (ARCN) initiative (Lawler et al., 2009). This report is intended to provide a visual representation of the data for quality control purposes. Each of the main water quality and fish parameters is summarized by lagoon, year and site type in both tabular and visual formats, allowing the reader to see and quickly identify data quality problems for rectification and/or documentation.
+
+# Methods
+
+Lagoon ecosystem monitoring methods are described in Jones et al., (2018) and Jones (2017).
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
@@ -22,9 +26,11 @@ library(tidyverse)
 library(readxl)
 library(odbc)
 library(leaflet)
+library(leaflet.extras)
+library(leafem)
 
 # Database connection
-connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna_dev", Database = "ARCN_Lagoons")
+Connection = dbConnect(odbc(),Driver = "Sql Server",Server = "inpyugamsvm01\\nuna", Database = "ARCN_Lagoons")
 
 # Table and figure counters
 TableCounter = 1
@@ -32,13 +38,39 @@ FigureCounter = 1
 
 ```
 
-```{r,label="WaterQualityDiscrete data retrieval"}
+```{r,label="Database queries",echo=FALSE,warning=FALSE,message=FALSE}
 # Get the discrete water quality data
 Sql = "SELECT * FROM WaterQualityDiscrete"
-wqd = dbGetQuery(connection,Sql)
+wqd = dbGetQuery(Connection,Sql)
+
+# Make dates actual dates
+wqd$Date = as.Date(wqd$Date)
+
+# If SiteType is null convert to Non-standard
+wqd$SiteType = ifelse(is.na(wqd$SiteType)==TRUE,'Non-standard',wqd$SiteType)
+
+# Get the discrete water quality data
+Sql = "SELECT [Lagoon]
+      ,[Park]
+      ,[OceanConnectedness]
+      ,Convert(Varchar(4000),[Description]) as Description
+      ,[Latitude]
+      ,[Longitude]
+      --,[PolygonFeature]
+      --,[RecordInsertedDate]
+      --,[RecordInsertedBy]
+  FROM [ARCN_Lagoons].[dbo].[Lagoons]
+  WHERE NOT Lagoon in ('Ocean')
+  ORDER BY Lagoon"
+Lagoons = dbGetQuery(Connection,Sql)
+
+# Summarize the number of sampling days by year by lagoon
+WaterQualityDiscreteSamplingHistory = wqd %>% group_by(Lagoon,Year) %>% summarise(`Sampling days`=n_distinct(Date),Earliest=min(Date),Latest=max(Date)) %>% filter(`Sampling days` > 0 & Lagoon !='Ocean') %>% arrange(Lagoon,Year)
+
+
 ```
 
-```{r,label='Functions'}
+```{r,label='Functions',echo=FALSE,warning=FALSE,message=FALSE}
 
 # Returns a data frame of summary statistics for the discrete water quality parameter Parameter for Lagoon
 # LagoonName: The name of a lagoon from the Lagoons database table
@@ -46,19 +78,22 @@ wqd = dbGetQuery(connection,Sql)
 # Returns: Tibble
 GetWaterQualityDiscreteParameterSummaryForALagoon = function(LagoonName,Parameter){
     # Build a summary of basic statistics for the lagoon and parameter
-    Summary = wqd %>% filter(Lagoon==LagoonName & is.na(!!sym(Parameter))==FALSE) %>% group_by(Lagoon,Date) %>% summarize(
-    Mean = mean(!!sym(Parameter),na.rm=TRUE)
-    ,Min = min(!!sym(Parameter),na.rm=TRUE)
-    ,Max = max(!!sym(Parameter),na.rm=TRUE)
-    ,SD = sd(!!sym(Parameter),na.rm=TRUE)
-    ,n = n()
-    ,.groups='keep'
-  ) %>% arrange(Date)
+    Summary = wqd %>% filter(Lagoon==LagoonName & is.na(!!sym(Parameter))==FALSE) %>% group_by(Date) %>% 
+      summarize(
+        Mean = mean(!!sym(Parameter),na.rm=TRUE)
+        ,Min = min(!!sym(Parameter),na.rm=TRUE)
+        ,Max = max(!!sym(Parameter),na.rm=TRUE)
+        ,SD = sd(!!sym(Parameter),na.rm=TRUE)
+        ,n = n()
+        ,.groups='keep'
+      ) %>%
+      arrange(Date)
   return(Summary)
 }
 #Test
 # GetWaterQualityDiscreteParameterSummaryForALagoon('Kotlik','Conductivity (uS/cm)')
 # GetWaterQualityDiscreteParameterSummaryForALagoon('Krusenstern','Conductivity (uS/cm)')
+
 
 PlotWaterQualityDiscreteParameterSummaryForALagoon = function(LagoonName,Parameter,FigureNumber){
   # Get a table of basic statistics for the lagoon and parameter
@@ -80,24 +115,217 @@ PlotWaterQualityDiscreteParameterSummaryForALagoon = function(LagoonName,Paramet
   return(Plot)
 }
 # Test
-PlotWaterQualityDiscreteParameterSummaryForALagoon('Kotlik','Salinity (ppt)',3)
-# PlotWaterQualityDiscreteParameterSummaryForALagoon('Krusenstern','Conductivity (uS/cm)')
-# PlotWaterQualityDiscreteParameterSummaryForALagoon('Kotlik','Salinity (ppt)')
+ PlotWaterQualityDiscreteParameterSummaryForALagoon('Kotlik','Salinity (ppt)',3)
+# PlotWaterQualityDiscreteParameterSummaryForALagoon('Krusenstern','Conductivity (uS/cm)',3)
+
+ 
+ 
+ 
+ # Returns a data frame of summary statistics for the discrete water quality parameter Parameter for Lagoon by site type (random, marine edge, inflow, etc.)
+# LagoonName: The name of a lagoon from the Lagoons database table
+# Parameter from the WaterQualityDiscrete database table.
+# Returns: Tibble
+GetWaterQualityDiscreteParameterSummaryForALagoonAndSiteType = function(LagoonName,Parameter){
+  Summary = wqd %>% 
+    mutate(SiteType=toupper(SiteType)) %>%
+    select(Lagoon,SiteType,Date,!!sym(Parameter)) %>%
+    filter(Lagoon==LagoonName & is.na(!!sym(Parameter))==FALSE) %>% 
+    mutate(SiteType = ifelse(is.na(SiteType),toupper('Non-standard'),SiteType)) %>%
+    group_by(SiteType,Date) %>%
+    summarize(
+      Mean = mean(!!sym(Parameter),na.rm=TRUE)
+      ,Min = min(!!sym(Parameter),na.rm=TRUE)
+      ,Max = max(!!sym(Parameter),na.rm=TRUE)
+      ,SD = sd(!!sym(Parameter),na.rm=TRUE)
+      ,n = n()
+      ,.groups='keep'
+    ) %>%
+    arrange(Lagoon,SiteType,Date)
+  
+  return(Summary)
+}
+#Test
+# GetWaterQualityDiscreteParameterSummaryForALagoonAndSiteType('Aukulak','Conductivity (uS/cm)')
+# GetWaterQualityDiscreteParameterSummaryForALagoon('Krusenstern','Conductivity (uS/cm)')
+
+
+ 
+PlotWaterQualityDiscreteParameterSummaryForALagoonAndSiteType = function(LagoonName,Parameter,FigureNumber){
+  # Get a table of basic statistics for the lagoon and parameter
+  Summary = GetWaterQualityDiscreteParameterSummaryForALagoonAndSiteType(LagoonName,Parameter) 
+  
+  # Plot the parameter
+  Plot = ggplot(Summary) +
+    geom_ribbon(aes(x=Date,ymin=Min,ymax=Max,group=1),fill='gray',alpha=0.5) +
+    geom_errorbar(aes(x=Date,ymin=Mean-SD,ymax=Mean+SD),width=0.5) +
+    geom_path(aes(x=Date,y=Mean,linetype=SiteType),na.rm=TRUE) +
+    geom_point(aes(x=Date,y=Mean),fill='black',na.rm=TRUE) +
+    labs(
+      title=paste(Parameter," in ",LagoonName," lagoon",sep=""),
+      caption=paste("Figure ",FigureNumber,". ",Parameter," in ",LagoonName," lagoon. Error bars indicate standard deviation. Gray band shows minimum and maximum daily values.",sep="")
+      ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) 
+  
+  return(Plot)
+}
+# Test
+# PlotWaterQualityDiscreteParameterSummaryForALagoonAndSiteType('Aukulak','Salinity (ppt)',3)
+# PlotWaterQualityDiscreteParameterSummaryForALagoonAndSiteType('Aukulak','Conductivity (uS/cm)',3)
+#  
+ 
+ 
+ 
+ 
+# Get a column plot of sampling days by year by lagoon
+GetWaterQualityDiscreteSamplingHistoryPlot = function(LagoonName,FigureNumber){
+  Title = paste("Discrete water quality sampling history in ",LagoonName," lagoon.",sep="")
+  # Plot the number of sampling days by year by lagoon
+  Plot = ggplot(WaterQualityDiscreteSamplingHistory %>% filter(Lagoon == LagoonName)) +
+    geom_col(aes(x = Year, y = `Sampling days`),width=0.3) +
+    labs(title=Title,caption=paste("Figure ",FigureNumber,". ",Title,".",sep=""),hjust=0) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    scale_x_continuous(breaks = seq(min(WaterQualityDiscreteSamplingHistory$Year), max(WaterQualityDiscreteSamplingHistory$Year), by = 1))
+  return(Plot)
+}
+# Test: 
+# GetWaterQualityDiscreteSamplingHistoryPlot('Atiligauraq',3)
+# GetWaterQualityDiscreteSamplingHistoryPlot('Kotlik',3)
+
+
+
+# Returns a leaflet map of LagoonName
+# Lagoon: Lagoon to map
+# Returns: Leaflet map
+GetLagoonMap = function(LagoonName){
+  Map = leaflet(Lagoons %>% filter(Lagoon==LagoonName)) %>%
+    # Points
+    addCircleMarkers(lng = ~Longitude, lat = ~Latitude,label=~Lagoon,color='red',fillColor = 'red',stroke=FALSE,fillOpacity = 0.5,
+    labelOptions = labelOptions(noHide = TRUE, fill = FALSE, offset = c(5,2), textsize = "18px", textOnly = TRUE)
+    ) %>%
+    
+    # Background map (https://leaflet-extras.github.io/leaflet-providers/preview/)
+    #addTiles()  
+    #addProviderTiles("Esri.WorldImagery") # Imagery, no contextual labels.
+    #addProviderTiles("Stadia.StamenTerrain") # Nice terrain and colors but no contextual labels
+    #addProviderTiles("Esri.WorldTopoMap") # Very light, feature labels
+    #addProviderTiles("Esri.NatGeoWorldMap") # Nice maps, better as you zoom in. Labels.
+    addProviderTiles("USGS.USTopo")
+    
+    return(Map)
+}
+# Test
+# GetLagoonMap('Aukulak')
+
+
+
+# This function bins water quality discrete data, counts the members in each bin, and then plots the counts as a histogram
+# LagoonName: Lagoon
+# Parameter: Water quality parameter. Must match a column in the wqd dataset
+# Returns: Histogram plot of counts by values for Parameter
+GetHistogramOfWaterQualityDiscreteParameter = function(LagoonName,Parameter,FigureCounter){
+  #LagoonName='ocean'
+  #Parameter='Temperature (C)'
+  
+  # Bin the water quality data into 20 bins by Parameter 
+  Data =  wqd %>% filter(Lagoon==LagoonName & is.na(!!sym(Parameter))==FALSE) %>% select(Lagoon,!!sym(Parameter))
+  if(nrow(Data)>0){
+    
+    # Bin the data into counts
+    Summary = Data %>% mutate(Bin = cut(!!sym(Parameter), breaks = 20)) %>% count(Bin)
+
+    # Plot the counts of each bin
+    Title = paste("Histogram of ",Parameter," values: ",LagoonName,sep="")
+    ggplot(Summary, aes(x = Bin, y = n)) +
+        geom_col() +
+        labs(title = "Binned Dissolved Oxygen Counts", x = "Dissolved Oxygen (mg/L) Bins", y = "Count") +
+        labs(title=Title,caption=paste("Figure ",FigureCounter,". ",Title,".",sep=""),hjust=0) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotate labels for readability
+  }
+}
+#Test
+# GetHistogramOfWaterQualityDiscreteParameter('Aukulak','Temperature (C)',3)
+
 
 ```
 
+# Study Sites
+
+NPS monitors fish and water quality in the coastal lagoons of northwester Alaska (Figure `r FigureCounter`). Within each lagoon samples are taken from a variety of standard sites (inflow, outflow, marine edge, terrestrial edge and random) as well as opportunistic non-standard sites in areas of interest like main channels, the centers of the lagoons, the ocean external to the lagoons, etc.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+# Map the points
+leaflet(Lagoons) %>%
+    # Points
+    addCircleMarkers(lng = ~Longitude, lat = ~Latitude,label=~Lagoon,color='red',fillColor = 'red',stroke=FALSE,fillOpacity = 0.5,
+    labelOptions = labelOptions(noHide = TRUE, fill = FALSE, offset = c(5,2), textsize = "18px", textOnly = TRUE)
+    ) %>%
+    
+    # Background map. For examples see https://leaflet-extras.github.io/leaflet-providers/preview/
+    #addTiles()  
+    #addProviderTiles("Esri.WorldImagery") %>% # Imagery, no contextual labels.
+    #addProviderTiles("Stadia.StamenTerrain") %>% # Nice terrain and colors but no contextual labels
+    #addProviderTiles("Esri.WorldTopoMap") %>%  # Very light, feature labels
+    #addProviderTiles("Esri.NatGeoWorldMap") %>%  # Nice maps, better as you zoom in. Labels.
+    addProviderTiles("USGS.USTopo") %>%
+    addMouseCoordinates()  # Display mouse coordinates (lat/lon)
+    
+```
 
 # Discrete Water Quality Sampling Results
 
-```{r,results='asis',echo=FALSE,warning=FALSE}
-for(Lagoon in wqd %>% distinct(Lagoon) %>% arrange(Lagoon) %>% pull(Lagoon)){
-  LagoonName = Lagoon
+## Sampling History
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,fig.height=10,fig.width=10}
+
+
+# Plot the number of sampling days by year by lagoon
+ggplot(WaterQualityDiscreteSamplingHistory) +
+  geom_col(aes(x = Year, y = `Sampling days`)) +
+  geom_text(aes(x=min(Year),y=max(`Sampling days`) + 5,label = Lagoon),size=3,hjust=0) +
+  facet_grid(vars(Lagoon)) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotates x-axis labels
+    #strip.text.x = element_text(angle = 0)  # Keeps facet grid labels horizontal
+    strip.text = element_blank()  # Removes facet grid labels
+  ) +
+  scale_x_continuous(breaks = seq(min(WaterQualityDiscreteSamplingHistory$Year), max(WaterQualityDiscreteSamplingHistory$Year), by = 1))  # Sets breaks incrementing by 1
+
+
+
+```
+
+## Water Quality Parameters By Lagoon
+
+```{r,results='asis',echo=FALSE,warning=FALSE,message=FALSE}
+
+# This function prints out a map of the lagoon, a sampling history plot and a summary table and plot of each main chemical or physical water quality parameter.
+# LagoonName: Name of the lagoon to profile.
+# Returns: Markdown report section.
+ProfileALagoon = function(LagoonName){
   
-  # Print the lagoon name as markdown
-  cat("## ",as.character(LagoonName)," \n\n",sep="")
+    # Print the lagoon name as markdown
+  cat("  \n\n",sep="")
+  cat("### ",LagoonName,"  \n\n",sep="")
+  cat("  \n\n",sep="")
+  cat("This section of the report characterizes ",as.character(LagoonName)," Lagoon and summarizes our sampling history and results of discrete physical and chemical data. \n\n",sep="")
+  cat("  \n\n",sep="")
   
-  # Print the summary table caption 
-  cat("Table ",TableCounter,".   \n\n",sep="")
+  # Print a map of the lagoon
+  cat("  \n\n",sep="")
+  print(GetLagoonMap(LagoonName)) # GetLagoonMap('Kotlik')
+  cat("Figure ",FigureCounter,". Map of ",LagoonName," Lagoon.  \n\n",sep="")
+  cat("  \n\n",sep="")
+  FigureCounter=FigureCounter+1
+  
+  # Print a column chart of number of sampling days per year for the lagoon - a visual sampling history
+  cat("  \n\n",sep="")
+  print(GetWaterQualityDiscreteSamplingHistoryPlot(LagoonName,FigureCounter))
+  cat("  \n\n",sep="")
+  FigureCounter=FigureCounter +1 
   
   # Make a list of discrete water quality parameters to describe
   Parameters = c("Conductivity (uS/cm)","Salinity (ppt)" ,"Salinity (PSU)","Dissolved Oxygen (% sat)","Dissolved Oxygen (mg/l)","pH","Turbidity (FNU)","Turbidity (NTU)","Turbidity (mg/L)","Chlorophyll (ug/L)")
@@ -106,128 +334,131 @@ for(Lagoon in wqd %>% distinct(Lagoon) %>% arrange(Lagoon) %>% pull(Lagoon)){
   for(Parameter in Parameters){
     
     # Parameter name
-    cat("### ",Parameter," \n\n",sep="")
-    
-    # Plot the parameter
-    print(PlotWaterQualityDiscreteParameterSummaryForALagoon(LagoonName,Parameter,FigureCounter))
+    cat("  \n\n",sep="")
+    cat("#### ",Parameter,"  \n\n",sep="")
     cat("  \n\n",sep="")
     
-    # Give a summary table
-    cat("Table ",TableCounter,". Summary of ",Parameter," in ",LagoonName," lagoon. \n\n",sep="")
-    print(knitr::kable(GetWaterQualityDiscreteParameterSummaryForALagoon(LagoonName,Parameter)))
+    # Plot the parameter
+    #print(PlotWaterQualityDiscreteParameterSummaryForALagoon(LagoonName,Parameter,FigureCounter))
+    cat("  \n\n",sep="")
+    print(PlotWaterQualityDiscreteParameterSummaryForALagoonAndSiteType(LagoonName,Parameter,FigureCounter))
+    cat("  \n\n",sep="")
+    FigureCounter = FigureCounter + 1
     
-    # Increment the table and figure counters
+    # Give a summary table
+    TableCaption = paste("Table ",TableCounter,". Summary of ",Parameter," in ",LagoonName," lagoon. \n\n",sep="")
+    cat("  \n\n",sep="")
+    print(knitr::kable(GetWaterQualityDiscreteParameterSummaryForALagoonAndSiteType(LagoonName,Parameter),caption=TableCaption))
+    cat("  \n\n",sep="")
     TableCounter = TableCounter + 1
+    
+    # Histogram the results to look for outliers
+    cat("  \n\n",sep="")
+    print(GetHistogramOfWaterQualityDiscreteParameter(LagoonName,Parameter,FigureCounter))
+    cat("  \n\n",sep="")
     FigureCounter = FigureCounter + 1
   }
-  
 }
+# TEST: ProfileALagoon('Aukulak')
 
-```
-
-
-
-```{r,echo=FALSE,results='asis'}
-# Get the temperature data by Lagoon, SiteType and Date
-# Sql = "SELECT * FROM [Summary_WaterQualityDiscrete_TemperatureByLagoonSiteTypeYearMonth]"
-# Temp = dbGetQuery(connection,Sql)
-# Temp$YM=paste(Temp$Year,"-",Temp$Month,sep="")
-# 
-# # Plot Temperature
-# GetLagoonTemperaturePlotBySite = function(LagoonName){
-#   ggplot(Temp %>% filter(Lagoon==LagoonName)) + 
-#     geom_col(aes(x=YM,y=Mean,fill=Month)) +
-#     geom_text(aes(x=YM,y=Mean,label=paste(round(Mean,digits=1)," (n=",n,")"))) +
-#     geom_errorbar(aes(x=YM,ymin = Minimum,ymax = Maximum)) +  
-#     ggtitle(paste('Temperature (C) in ',LagoonName," Lagoon By Site Type and Month",sep="")) +
-#     facet_grid(vars(SiteType)) +
-#     theme_minimal() +
-#     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
-# }
-# #GetLagoonTemperaturePlotBySite('Krusenstern')
-# # GetLagoonTemperaturePlotBySite('Aukulak')
-# 
-# Lagoons = Temp %>% distinct(Lagoon) %>% arrange(Lagoon)
-# for(i in 1:nrow(Lagoons)){
-#   Lagoon = Lagoons[i,'Lagoon']
-#   cat("## ",Lagoon,"\n\n",sep="")
-#   print(GetLagoonTemperaturePlotBySite(Lagoon))
-#   cat("\n\n",sep="")
-# }
-
+# Profile the lagoons one by one
+for(Lagoon in Lagoons$Lagoon){
+  LagoonName = Lagoon
+  ProfileALagoon(as.character(LagoonName))
+}
 
 ```
 
 # Continuous Water Quality Sampling Results
 
-```{r,echo=FALSE}
+```{r,echo=FALSE,echo=FALSE,warning=FALSE,message=FALSE}
 # Get the continuous water quality data
 Sql = "SELECT * FROM WaterQualityContinuous"
-wqc = dbGetQuery(connection,Sql)
+wqc = dbGetQuery(Connection,Sql)
 wqc$Date = as.Date(wqc$DateTime)
 #  glimpse(wqc)
 
-# Summarize the data by lagoon and date
-Summary_Temperature = wqc %>% group_by(Lagoon,Date) %>% summarize(
-    `Temperature (mean)`=mean(`Temperature (C)`, na.rm = TRUE)
-    ,Min=min(`Temperature (C)`, na.rm = TRUE)
-    ,Max=max(`Temperature (C)`, na.rm = TRUE)
-    ,`S.D.`=sd(`Temperature (C)`, na.rm = TRUE)
-    ,n=n()
-  )
 ```
 
-```{r,echo=FALSE}
-# colnames(wqc)
+```{r,results='asis',echo=FALSE,warning=FALSE,message=FALSE}
+# This function prints out a map of the lagoon, a sampling history plot and a summary table and plot of each main chemical or physical water quality parameter.
+# LagoonName: Name of the lagoon to profile.
+# Returns: Markdown report section.
+ProfileContinuousWaterQuality = function(LagoonName){
+  # Print the lagoon name as markdown
+  cat("## ",as.character(LagoonName)," \n\n",sep="")
+  cat("This section of the report characterizes the continuous water quality data for ",as.character(LagoonName)," Lagoon. \n\n",sep="") 
 
+    # Make a list of discrete water quality parameters to describe
+  Parameters = c("Turbidity (FNU)"
+,"TSS (mg/L)"
+,"Chlorophyll (RFU)"
+,"Chlorophyll (ug/L)"
+,"Blue-green algae (RFU)"
+,"Blue-green algae (ug/L)"
+,"Temperature (C)"
+,"Conductivity (uS/cm)"
+,"Salinity (psu)"
+,"Salinity (ppt)"
+,"nLF Cond (uS/cm)"
+,"TDS (mg/L)"
+,"ODO (% sat)"
+,"ODO (mg/L)"
+,"pH"
+,"Oxidative reduction potential (mV)"
+,"[Oxidative reduction potential raw mV"
+,"Pressure (psi)"
+,"Depth (m)")
+  
+  # Loop through the parameters and output results as markdown, one by one
+  for(Parameter in Parameters){
+    # Parameter name
+    cat("### ",Parameter," \n\n",sep="")
+    # Summarize the data by lagoon and date
+    Summary = wqc %>% filter(Lagoon==LagoonName & is.na(!!sym(Parameter))==FALSE) %>% group_by(Date) %>% summarize(
+      Mean=mean(!!sym(Parameter), na.rm = TRUE)
+      ,Min=min(!!sym(Parameter), na.rm = TRUE)
+      ,Max=max(!!sym(Parameter), na.rm = TRUE)
+      ,`S.D.`=sd(!!sym(Parameter), na.rm = TRUE)
+      ,n=n()
+    )
+    
+    # Plot the Parameter
+    Title=paste(LagoonName,": ",Parameter,sep="")
+    Caption = paste("Figure ",FigureCounter,". ",Parameter," in ",LagoonName,".",sep="")
+    print(ggplot(Summary) +
+        geom_point(aes(x=Date,y=Mean)) +
+        geom_line(aes(x=Date,y=Mean)) +
+        geom_errorbar(aes(x=Date,ymin=Mean-`S.D.`,ymax=Mean+`S.D.`),width=0.3) +
+        geom_ribbon(aes(x=Date,ymin=Min,ymax=Max),fill='steelblue',alpha=0.5) +
+        labs(title=Title,caption=Caption,hjust=0) +
+        scale_x_date(date_labels = "%Y-%m-%d") +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1))
+    )
+    FigureCounter = FigureCounter + 1
+    
+    # Output the summary table
+    print(knitr::kable(Summary,caption = paste("Table ",TableCounter,". ",Parameter," in ",LagoonName,sep="")))
+    TableCounter = TableCounter+1
+    
+  }
+}
+# ProfileContinuousWaterQuality('Anigaaq')
 
-ggplot(Summary_Temperature) +
-  #geom_point(aes(x = Date, y = `Temperature (C)`)) +
-  geom_line(aes(x=Date,y=`Temperature (mean)`)) +
-  geom_ribbon(aes(x=Date,ymin=Min,ymax=Max),fill='steelblue',alpha=0.5) +
-  facet_grid(vars(Lagoon)) +
-  scale_x_date(date_labels = "%Y-%m", date_breaks = "1 month") +  # Format for Year-Month
-  theme_minimal()
+# Loop the lagoons and output a continuous water quality profile for each
+for(Lagoon in Lagoons$Lagoon){
+  LagoonName = Lagoon
+  ProfileContinuousWaterQuality(LagoonName)
+}
 
 
 ```
 
+# References
 
+Jones T. 2017. Coastal Lagoon Vital Signs Monitoring Protocol for the Arctic Network: Standard Operating Procedures Version 1.0. National Park Service <https://irma.nps.gov/DataStore/Reference/Profile/2310242>
 
+Jones T, Apsens S, Miller S, Robards M. 2018. Coastal lagoons vital signs monitoring protocol for the Arctic Network: Volume 1, report narrative, version 1.0. Natural Resource Report. NPS/ARCN/NRR—2018/1824. National Park Service. Fort Collins, Colorado[ https://irma.nps.gov/DataStore/Reference/Profile/2257596](https://irma.nps.gov/DataStore/Reference/Profile/2257596 "Click to go to Reference Profile page.")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Lawler J.P., Miller S.D., Sanzone D.M., Ver Hoef J., Young S.B. 2009. Arctic Network Vital Signs Monitoring Plan. Natural Resource Report. NPS/ARCN/NRR—2009/088. National Park Service. Fort Collins[ https://irma.nps.gov/DataStore/Reference/Profile/661340](https://irma.nps.gov/DataStore/Reference/Profile/661340 "Click to go to Reference Profile page.")
